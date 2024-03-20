@@ -88,7 +88,7 @@ def train():
     parser.add_argument("--logging_dir", type=str, default='results', help="logging directory")
     parser.add_argument("--train_batch_size", type=int, default=16, help="train batch size")
     parser.add_argument("--eval_batch_size", type=int, default=32, help="eval batch size")
-    parser.add_argument("--epochs", type=int, default=100, help="number of epochs to train the model")
+    parser.add_argument("--epochs", type=int, default=10000, help="number of epochs to train the model")
     parser.add_argument("--lr", type=float, default=0.001, help="learning rate")
     parser.add_argument("--seed", type=int, default=24, help="random seed")
     parser.add_argument("--log_interval", type=int, default=100, help="log interval")
@@ -267,9 +267,9 @@ def train():
                 with torch.no_grad():
                     log_validation(args, eval_loader, vae, accelerator, weight_dtype, epoch)
 
-                output_dir = f"epoch_{epoch}"
-                output_dir = args.output_dir / output_dir
-                accelerator.save_state(str(output_dir))
+                    output_dir = f"epoch_{epoch}"
+                    output_dir = args.output_dir / output_dir
+                    accelerator.save_state(str(output_dir))
 
     if accelerator.is_main_process:
         vae = accelerator.unwrap_model(vae)
