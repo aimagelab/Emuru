@@ -159,7 +159,7 @@ def train():
         weight_decay=args.adam_weight_decay,
         eps=args.adam_epsilon)
 
-    train_dataset = OnlineFontSquare('files/font_square/fonts', 'files/font_square/backgrounds', TextSampler(8, 32, 6), length=1000)
+    train_dataset = OnlineFontSquare('files/font_square/fonts', 'files/font_square/backgrounds', TextSampler(8, 32, 6), length=5000)
     eval_dataset = OnlineFontSquare('files/font_square/fonts', 'files/font_square/backgrounds', TextSampler(8, 32, 6), length=64)
 
     eval_loader = DataLoader(eval_dataset, batch_size=args.eval_batch_size, shuffle=False, collate_fn=eval_dataset.collate_fn, num_workers=4)
