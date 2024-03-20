@@ -120,9 +120,10 @@ def train():
     args.height = 64
 
     accelerator_project_config = ProjectConfiguration(
-        total_limit=args.checkpoints_total_limit,
         project_dir=str(args.output_dir),
         logging_dir=str(args.logging_dir),
+        automatic_checkpoint_naming=True,
+        total_limit=args.checkpoints_total_limit,
     )
 
     accelerator = Accelerator(
@@ -158,7 +159,7 @@ def train():
         weight_decay=args.adam_weight_decay,
         eps=args.adam_epsilon)
 
-    train_dataset = OnlineFontSquare('files/font_square/fonts', 'files/font_square/backgrounds', TextSampler(8, 32, 6))
+    train_dataset = OnlineFontSquare('files/font_square/fonts', 'files/font_square/backgrounds', TextSampler(8, 32, 6), length=1000)
     eval_dataset = OnlineFontSquare('files/font_square/fonts', 'files/font_square/backgrounds', TextSampler(8, 32, 6), length=64)
 
     eval_loader = DataLoader(eval_dataset, batch_size=args.eval_batch_size, shuffle=False, collate_fn=eval_dataset.collate_fn, num_workers=4)
@@ -262,10 +263,17 @@ def train():
                 progress_bar.set_postfix(**logs)
 
                 if accelerator.is_main_process:
-                    accelerator.save_model(accelerator.unwrap_model(vae), save_directory='results')
                     if epoch % args.eval_epochs == 0:
                         with torch.no_grad():
                             log_validation(args, eval_loader, vae, accelerator, weight_dtype, epoch)
+
+                        output_dir = f"epoch_{epoch}"
+                        output_dir = args.output_dir / output_dir
+                        accelerator.save_state(str(output_dir))
+
+    if accelerator.is_main_process:
+        vae = accelerator.unwrap_model(vae)
+        vae.save_pretrained(args.output_dir)
 
     accelerator.end_training()
     logger.info("***** Training finished *****")
