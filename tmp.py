@@ -8,6 +8,7 @@ dataset = OnlineFontSquare('files/font_square/fonts', 'files/font_square/backgro
 loader = DataLoader(dataset, batch_size=32, shuffle=False, collate_fn=dataset.collate_fn)
 
 for imgs, bw_imgs, texts in tqdm(loader):
-    save_image(make_grid(imgs, nrow=4), 'test.png')
-    save_image(make_grid(bw_imgs, nrow=4), 'test_bw.png')
-    break
+    # save_image(make_grid(imgs, nrow=4), 'test.png')
+    # save_image(make_grid(bw_imgs, nrow=4), 'test_bw.png')
+    # break
+    pass

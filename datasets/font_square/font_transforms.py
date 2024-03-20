@@ -143,7 +143,8 @@ class ImgResize:
     def __call__(self, sample):
         img, bw_img = sample
         _, h, w = img.shape
-        if h == self.height: return img
+        if h == self.height:
+            return img, bw_img
         out_w = int(self.height * w / h)
 
         img = F.resize(img, [self.height, out_w])
