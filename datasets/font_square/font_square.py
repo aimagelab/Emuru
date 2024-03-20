@@ -13,7 +13,7 @@ def pad_images(images, padding_value=1):
 
 
 class OnlineFontSquare(Dataset):
-    def __init__(self, fonts_path, backgrounds_path, text_sampler=None, transform=None):
+    def __init__(self, fonts_path, backgrounds_path, text_sampler=None, transform=None, length=1000):
         self.fonts_path = Path(fonts_path)
         self.fonts = list(Path(fonts_path).glob('*.ttf'))
         self.text_sampler = text_sampler
@@ -30,13 +30,14 @@ class OnlineFontSquare(Dataset):
 
             FT.ColorJitter(brightness=0.15, contrast=0.15, saturation=0.15, hue=0),
             FT.ImgResize(64),
+            FT.MaxWidth(768),
             FT.Normalize((0.5,), (0.5,))
         ]) if transform is None else transform
 
-        self.lenght = 1000
+        self.length = length
 
     def __len__(self):
-        return self.lenght
+        return self.length
 
     def __getitem__(self, _):
         text = self.text_sampler()
@@ -47,7 +48,11 @@ class OnlineFontSquare(Dataset):
         imgs, bw_imgs, texts = zip(*batch)
         imgs = pad_images(imgs)
         bw_imgs = pad_images(bw_imgs)
-        return imgs, bw_imgs, texts
+        return {
+            'img': imgs,
+            'bw_img': bw_imgs,
+            'text': texts
+        }
 
 
 class TextSampler:

@@ -1,3 +1,7 @@
 opencv_python==4.9.0.80
 einops==0.7.0
 nltk==3.8.1
+accelerate==0.28.0
+diffusers==0.27.1
+transformers==4.38.2
+wandb==0.16.4

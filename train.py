@@ -51,12 +51,13 @@ def log_validation(args, eval_loader, vae, accelerator, weight_dtype, epoch):
     images = []
 
     for step, batch in enumerate(eval_loader):
-        target = batch.to(weight_dtype)
+        image = batch['img'].to(weight_dtype)
+        target = batch['bw_img'].to(weight_dtype)
 
         if accelerator.num_processes > 1:
-            posterior = vae_model.module.encode(target).latent_dist
+            posterior = vae_model.module.encode(image).latent_dist
         else:
-            posterior = vae_model.encode(target).latent_dist
+            posterior = vae_model.encode(image).latent_dist
 
         z = posterior.sample()
 
@@ -68,13 +69,13 @@ def log_validation(args, eval_loader, vae, accelerator, weight_dtype, epoch):
         eval_loss += loss.item()
 
         if step == 0:
-            images.append(torch.cat([target.cpu(), pred.cpu()], dim=-1)[:8])
+            images.append(torch.cat([image.cpu(), pred.repeat(1, 3, 1, 1).cpu()], dim=-1)[:8])
 
     grid_nrows = 2
     accelerator.log({
         "eval_loss": eval_loss / len(eval_loader),
         "Original (left), Reconstruction (right)":
-            [wandb.Image(torchvision.utils.make_grid(image, nrow=grid_nrows)) for _, image in enumerate(images)]
+            [wandb.Image(torchvision.utils.make_grid(image, nrow=grid_nrows, normalize=True, value_range=(-1, 1))) for _, image in enumerate(images)]
     })
 
     del vae_model
@@ -85,7 +86,7 @@ def train():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output_dir", type=str, default='results', help="output directory")
     parser.add_argument("--logging_dir", type=str, default='results', help="logging directory")
-    parser.add_argument("--train_batch_size", type=int, default=8, help="train batch size")
+    parser.add_argument("--train_batch_size", type=int, default=16, help="train batch size")
     parser.add_argument("--eval_batch_size", type=int, default=32, help="eval batch size")
     parser.add_argument("--epochs", type=int, default=100, help="number of epochs to train the model")
     parser.add_argument("--lr", type=float, default=0.001, help="learning rate")
@@ -142,7 +143,7 @@ def train():
         args.logging_dir = Path(args.logging_dir)
         args.logging_dir.mkdir(parents=True, exist_ok=True)
 
-    vae = AutoencoderKL(latent_channels=1)  # TODO VAE CONFIG
+    vae = AutoencoderKL(latent_channels=1, out_channels=1)  # TODO VAE CONFIG
     # vae = AutoencoderKL.from_pretrained("stabilityai/stable-diffusion-2", subfolder='vae')
     vae.requires_grad_(True)
     if args.gradient_checkpointing:
@@ -158,7 +159,7 @@ def train():
         eps=args.adam_epsilon)
 
     train_dataset = OnlineFontSquare('files/font_square/fonts', 'files/font_square/backgrounds', TextSampler(8, 32, 6))
-    eval_dataset = OnlineFontSquare('files/font_square/fonts', 'files/font_square/backgrounds', TextSampler(8, 32, 6))
+    eval_dataset = OnlineFontSquare('files/font_square/fonts', 'files/font_square/backgrounds', TextSampler(8, 32, 6), length=64)
 
     eval_loader = DataLoader(eval_dataset, batch_size=args.eval_batch_size, shuffle=False, collate_fn=eval_dataset.collate_fn, num_workers=4)
     train_loader = DataLoader(train_dataset, batch_size=args.train_batch_size, shuffle=False, collate_fn=train_dataset.collate_fn, num_workers=4)
@@ -170,7 +171,7 @@ def train():
         num_training_steps=args.epochs * args.gradient_accumulation_steps,
     )
 
-    vae, vae.encoder, vae.decoder, optimizer, train_loader, eval_loader, test_loader, lr_scheduler = (
+    vae, vae.encoder, vae.decoder, optimizer, train_loader, eval_loader, lr_scheduler = (
         accelerator.prepare(vae, vae.encoder, vae.decoder, optimizer, train_loader, eval_loader, lr_scheduler))
 
     weight_dtype = torch.float32
@@ -212,12 +213,13 @@ def train():
         for step, batch in enumerate(train_loader):
             with accelerator.autocast():
                 with accelerator.accumulate(vae):
-                    target = batch.to(weight_dtype)
+                    image = batch['img'].to(weight_dtype)
+                    target = batch['bw_img'].to(weight_dtype)
 
                     if accelerator.num_processes > 1:
-                        posterior = vae.module.encode(target).latent_dist
+                        posterior = vae.module.encode(image).latent_dist
                     else:
-                        posterior = vae.encode(target).latent_dist
+                        posterior = vae.encode(image).latent_dist
 
                     z = posterior.sample()
 
@@ -260,6 +262,7 @@ def train():
                 progress_bar.set_postfix(**logs)
 
                 if accelerator.is_main_process:
+                    accelerator.save_model(accelerator.unwrap_model(vae), save_directory='results')
                     if epoch % args.eval_epochs == 0:
                         with torch.no_grad():
                             log_validation(args, eval_loader, vae, accelerator, weight_dtype, epoch)

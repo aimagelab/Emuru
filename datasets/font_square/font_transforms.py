@@ -65,8 +65,8 @@ class RandomResizedCrop:
         ratio = img.shape[1] / img.shape[0]
         ratio = (ratio - self.ratio_eps, ratio + self.ratio_eps)
 
-        i, j, h, w = T.RandomResizedCrop.get_params(img, self.scale, ratio)
-        sample['font_img'] = F.resized_crop(img.unsqueeze(0), i, j, h, w, img.shape).squeeze(0)
+        i, j, h, w = T.RandomResizedCrop.get_params(img, self.scale, ratio, antialias=True)
+        sample['font_img'] = F.resized_crop(img.unsqueeze(0), i, j, h, w, img.shape, antialias=True).squeeze(0)
         sample.record(self, ijhw=(i, j, h, w))
         return sample
 
@@ -147,8 +147,23 @@ class ImgResize:
             return img, bw_img
         out_w = int(self.height * w / h)
 
-        img = F.resize(img, [self.height, out_w])
-        bw_img = F.resize(bw_img, [self.height, out_w])
+        img = F.resize(img, [self.height, out_w], antialias=True)
+        bw_img = F.resize(bw_img, [self.height, out_w], antialias=True)
+        return img, bw_img
+
+
+class MaxWidth:
+    def __init__(self, width):
+        self.width = width
+
+    def __call__(self, sample):
+        img, bw_img = sample
+        _, h, w = img.shape
+        if w <= self.width:
+            return img, bw_img
+        img = img[:, :, :self.width]
+        bw_img = bw_img[:, :, :self.width]
+
         return img, bw_img
 
 
@@ -168,7 +183,7 @@ class RandomBackground(object):
         _, bg_h, bg_w = bg.shape
         resize_crop = T.RandomResizedCrop((img_h, img_w), antialias=True)
         i, j, h, w = resize_crop.get_params(bg, resize_crop.scale, resize_crop.ratio)
-        return F.resized_crop(bg, i, j, h, w, resize_crop.size, resize_crop.interpolation), (i, j, h, w)
+        return F.resized_crop(bg, i, j, h, w, resize_crop.size, resize_crop.interpolation, antialias=True), (i, j, h, w)
 
 
     def __call__(self, img):
