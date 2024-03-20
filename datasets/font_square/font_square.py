@@ -37,18 +37,18 @@ class OnlineFontSquare(Dataset):
 
     def __len__(self):
         return self.lenght
-    
+
     def __getitem__(self, _):
         text = self.text_sampler()
         img, bw_img = self.transform(text)
         return img, bw_img, text
-    
+
     def collate_fn(self, batch):
         imgs, bw_imgs, texts = zip(*batch)
         imgs = pad_images(imgs)
         bw_imgs = pad_images(bw_imgs)
         return imgs, bw_imgs, texts
-    
+
 
 class TextSampler:
     def __init__(self, min_len, max_len, count, exponent=1, charset=None):
@@ -61,7 +61,6 @@ class TextSampler:
         self.idx = 0
         self.load_words()
 
-
     def load_words(self):
         self.words = nltk.corpus.abc.words()
         self.words += nltk.corpus.brown.words()
@@ -72,7 +71,6 @@ class TextSampler:
 
         if self.charset is not None:
             self.words = [word for word in self.words if all([c in self.charset for c in word])]
-    
 
     def __call__(self):
         if self.idx + self.count > len(self.words):
@@ -80,16 +78,12 @@ class TextSampler:
             res += self.words[:self.count - len(res)]
             self.idx = self.count - len(res)
         else:
-            res = self.words[self.idx:self.idx+self.count]
+            res = self.words[self.idx:self.idx + self.count]
             self.idx += self.count
-        
+
         txt = ' '.join(res)
         if self.min_len is not None and len(txt) < self.min_len:
             txt = txt + (' ' * (self.min_len - len(txt)))
         if self.max_len is not None and len(txt) > self.max_len:
             txt = txt[:self.max_len]
         return txt
-
-
-
-
