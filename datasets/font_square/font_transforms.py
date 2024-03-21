@@ -70,13 +70,16 @@ class RenderImage(object):
 
 
 class RandomWarping:
-    def __init__(self, std=0.05, grid_shape=(5,3)):
+    def __init__(self, std=0.05, grid_shape=(5,3), p=0.5):
         self.std = std
         self.grid_shape = grid_shape
+        self.p = p
 
     def __call__(self, sample):
-        img = sample['img']
+        if random.random() > self.p:
+            return sample
 
+        img = sample['img']
         _, h, w = img.shape
         x = np.linspace(-1, 1, self.grid_shape[0])
         y = np.linspace(-1, 1, self.grid_shape[1])
@@ -142,6 +145,22 @@ class MaxWidth:
         sample['bw_img'] = sample['bw_img'][:, :, :self.width]
         sample['bg_patch'] = sample['bg_patch'][:, :, :self.width]
 
+        return sample
+    
+
+class PadDivisible:
+    def __init__(self, divisor):
+        self.divisor = divisor
+
+    def __call__(self, sample):
+        _, h, w = sample['img'].shape
+        pad_w = (self.divisor - w % self.divisor) % self.divisor
+        if pad_w == 0:
+            return sample
+
+        sample['img'] = F.pad(sample['img'], (0, 0, pad_w, 0), fill=1)
+        sample['bw_img'] = F.pad(sample['bw_img'], (0, 0, pad_w, 0), fill=1)
+        sample['bg_patch'] = F.pad(sample['bg_patch'], (0, 0, pad_w, 0), fill=1)
         return sample
 
 
