@@ -11,14 +11,17 @@ import os
 from PIL import Image
 from .tps import TPS
 import json
+import string
 
 
 def mask_coords(mask):
-    x0 = mask.max(1).values.type(torch.uint8).argmax()
-    y0 = mask.max(2).values.type(torch.uint8).argmax()
-    x1 = mask.shape[2] - mask.max(1).values.flip(0).type(torch.uint8).argmax()
-    y1 = mask.shape[1] - mask.max(2).values.flip(0).type(torch.uint8).argmax()
-    return x0, y0, x1, y1
+    canvas = torch.zeros((mask.shape[1] + 2, mask.shape[2] + 2))
+    canvas[1:-1, 1:-1] = mask
+    x0 = canvas.max(0).values.int().argmax()
+    y0 = canvas.max(1).values.int().argmax()
+    x1 = canvas.shape[1] - canvas.max(0).values.flip(0).int().argmax()
+    y1 = canvas.shape[0] - canvas.max(1).values.flip(0).int().argmax()
+    return x0 + 1, y0 + 1, x1 - 1, y1 - 1
 
 
 class RenderImage(object):
@@ -44,15 +47,25 @@ class RenderImage(object):
             return render
         
         self.renderers = [render_fn(path) for path in fonts_path]
+        self.fonts_to_ids = {path.name: i for i, path in enumerate(fonts_path)}
+        self.ids_to_fonts = {i: path.name for i, path in enumerate(fonts_path)}
 
         with open(fonts_data_path, 'w') as f:
             json.dump(fonts_data, f)
 
 
-    def __call__(self, text):
-        render_class = random.choice(self.renderers)
-        np_img = render_class.render(text, return_np=True, action='top_left', pad=self.pad)
-        return torch.from_numpy(np_img).unsqueeze(0).float()
+    def __call__(self, sample):
+        font_id = sample['font_id'] if 'font_id' in sample else random.randrange(len(self.renderers))
+        render_class = self.renderers[font_id]
+        try:
+            np_img = render_class.render(sample['text'], return_np=True, action='top_left', pad=self.pad)
+        except OSError:
+            print(f'Error rendering {sample["text"]} with font {self.ids_to_fonts[font_id]}. Try to render only ascii letters and digits.')
+            sample['text'] = ''.join([c for c in sample['text'] if c in set(string.ascii_letters + string.digits + ' ')])
+            np_img = render_class.render(sample['text'], return_np=True, action='top_left', pad=self.pad)
+
+        sample['img'] = torch.from_numpy(np_img).unsqueeze(0).float()
+        return sample
 
 
 class RandomResizedCrop:
@@ -76,7 +89,9 @@ class RandomWarping:
         self.std = std
         self.grid_shape = grid_shape
 
-    def __call__(self, img):
+    def __call__(self, sample):
+        img = sample['img']
+
         _, h, w = img.shape
         x = np.linspace(-1, 1, self.grid_shape[0])
         y = np.linspace(-1, 1, self.grid_shape[1])
@@ -103,8 +118,13 @@ class RandomWarping:
         grid = torch.from_numpy(transformed_xy)
         grid = grid.reshape(1, h, w, 2)
         img = img.unsqueeze(0).type(grid.dtype)
-        img = torch.nn.functional.grid_sample(img, grid, mode='nearest', padding_mode='border', align_corners=False).squeeze(0)
-        return img
+        sample['img'] = torch.nn.functional.grid_sample(img, grid, mode='nearest', padding_mode='border', align_corners=False).squeeze(0)
+        return sample
+    
+class GaussianBlur(T.GaussianBlur):
+    def __call__(self, sample):
+        sample['img'] = super().forward(sample['img'])
+        return sample
 
 class ToRGB:
     def __call__(self, img):
@@ -141,15 +161,16 @@ class ImgResize:
         self.height = height
 
     def __call__(self, sample):
-        img, bw_img = sample
-        _, h, w = img.shape
+        _, h, w = sample['img'].shape
         if h == self.height:
-            return img, bw_img
+            return sample
         out_w = int(self.height * w / h)
+        # assert out_w > 0 and out_w < 10_000, f'Invalid width {out_w} for image size {h}x{w}. Font: {sample["font_id"]} Text: {sample["text"]}'
 
-        img = F.resize(img, [self.height, out_w], antialias=True)
-        bw_img = F.resize(bw_img, [self.height, out_w], antialias=True)
-        return img, bw_img
+        sample['img'] = F.resize(sample['img'], [self.height, out_w], antialias=True)
+        sample['bw_img'] = F.resize(sample['bw_img'], [self.height, out_w], antialias=True)
+        sample['bg_patch'] = F.resize(sample['bg_patch'], [self.height, out_w], antialias=True)
+        return sample
 
 
 class MaxWidth:
@@ -157,54 +178,59 @@ class MaxWidth:
         self.width = width
 
     def __call__(self, sample):
-        img, bw_img = sample
-        _, h, w = img.shape
+        _, h, w = sample['img'].shape
         if w <= self.width:
-            return img, bw_img
-        img = img[:, :, :self.width]
-        bw_img = bw_img[:, :, :self.width]
+            return sample
+        
+        sample['img'] = sample['img'][:, :, :self.width]
+        sample['bw_img'] = sample['bw_img'][:, :, :self.width]
+        sample['bg_patch'] = sample['bg_patch'][:, :, :self.width]
 
-        return img, bw_img
+        return sample
 
 
 class RandomBackground(object):
     start_time = time.time()
-    def __init__(self, backgrounds_path, include_white=True):
-        self.bgs = [Image.open(path) for path in backgrounds_path.rglob('*.png')]
+    def __init__(self, backgrounds_path):
+        self.bgs = [Image.open(path) for path in backgrounds_path.rglob('*') if path.suffix in ('.jpg', '.png', '.jpeg')]
         self.bgs = [F.to_tensor(img.convert('RGB')) for img in self.bgs]
-        self.include_white = include_white
-        if include_white:
-            max_height = max([bg.shape[1] for bg in self.bgs])
-            max_width = max([bg.shape[2] for bg in self.bgs])
-            self.bgs.append(torch.ones((3, max_height, max_width), dtype=torch.float32))
+
+    def get_available_idx(self, img_h, img_w):
+        return [bg for bg in self.bgs if bg.shape[1] >= img_h and bg.shape[2] >= img_w] + [None]  # None is for white background
 
     @staticmethod
     def random_patch(bg, img_h, img_w):
         _, bg_h, bg_w = bg.shape
+        assert bg_h >= img_h and bg_w >= img_w, f'Background size {bg_h}x{bg_w} is too small for image size {img_h}x{img_w}'
         resize_crop = T.RandomResizedCrop((img_h, img_w), antialias=True)
         i, j, h, w = resize_crop.get_params(bg, resize_crop.scale, resize_crop.ratio)
         return F.resized_crop(bg, i, j, h, w, resize_crop.size, resize_crop.interpolation, antialias=True), (i, j, h, w)
 
+    def __call__(self, sample):
+        _, h, w = sample['img'].shape
 
-    def __call__(self, img):
-        _, h, w = img.shape
-
-        bg_idx = random.randrange(0, len(self.bgs))
-        bg_patch, _ = self.random_patch(self.bgs[bg_idx], h, w)
+        available_bgs = self.get_available_idx(h, w)
+        bg = random.choice(available_bgs)
+        if bg is not None:
+            bg_patch, _ = self.random_patch(bg, h, w)
+        else:
+            bg_patch = torch.ones((3, h, w))
+        assert bg_patch.numel() > 0, f'Background patch is empty for image size {h}x{w}'
 
         if random.random() > 0.5:
             bg_patch = bg_patch.flip(1)   # up-down
         if random.random() > 0.5:
             bg_patch = bg_patch.flip(2)   # left-right
 
-        return img, bg_patch
+        sample['bg_patch'] = bg_patch
+        return sample
 
 class TailorTensor:
     def __init__(self, pad=0):
         self.pad = pad
 
     def __call__(self, sample):
-        img, bg_patch = sample
+        img, bg_patch = sample['img'], sample['bg_patch']
         x0, y0, x1, y1 = mask_coords(img < 0.99)
         x0 = max(0, x0 - self.pad)
         x1 = min(bg_patch.shape[2], x1 + self.pad)
@@ -213,7 +239,9 @@ class TailorTensor:
 
         img = img[:, y0:y1, x0:x1]
         bg_patch = bg_patch[:, y0:y1, x0:x1]
-        return img, bg_patch
+
+        sample['img'], sample['bg_patch'] = img, bg_patch
+        return sample
 
 class ToCustomTensor:
     def __init__(self, min_alpha=0.5, max_alpha=1.0):
@@ -221,36 +249,35 @@ class ToCustomTensor:
         self.max_alpha = max_alpha
 
     def __call__(self, sample):
-        bw_img, bg_patch = sample
+        bw_img, bg_patch = sample['img'], sample['bg_patch']
         alpha = random.uniform(self.min_alpha, self.max_alpha)
         font_mask = 1 - ((1 - bw_img) * alpha)
         img = font_mask * bg_patch
-        return img, bw_img
+        sample['img'] = img
+        sample['bw_img'] = bw_img
+        return sample
 
 
 class Normalize(T.Normalize):
     def forward(self, sample):
-        img, bw_img = sample
-        img = super().forward(img)
-        img_bw = super().forward(bw_img)
-        return img, img_bw
+        sample['img'] = super().forward(sample['img'])
+        sample['bw_img'] = super().forward(sample['bw_img'])
+        return sample
 
 
 class RandomRotation(T.RandomRotation):
-    def __init__(self, degrees, *args, **kwargs):
-        super().__init__(degrees, *args, **kwargs)
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
 
-    def forward(self, img):
-        angle = self.get_params(self.degrees)
-        img = F.rotate(1 - img, angle, F.InterpolationMode.NEAREST, self.expand, self.center, self.fill)
-        return 1 - img
+    def forward(self, sample):
+        sample['img'] = super().forward(sample['img'])
+        return sample
 
 
 class ColorJitter(T.ColorJitter):
     def forward(self, sample):
-        img, bw_img = sample
-        img = super().forward(img)
-        return img, bw_img
+        sample['img'] = super().forward(sample['img'])
+        return sample
 
 
 # class RandomAdjustSharpness(T.RandomAdjustSharpness):
@@ -304,11 +331,11 @@ class GrayscaleErosion:
         return img
 
     def __call__(self, sample):
-        img, bw_img = sample
         if random.random() > self.p:
-            img = self.erode(img)
-            bw_img = self.erode(bw_img)
-        return img, bw_img
+            sample['img'] = self.erode(sample['img'])
+            sample['bw_img'] = self.erode(sample['bw_img'])
+            sample['bg_patch'] = self.erode(sample['bg_patch'])
+        return sample
 
 class GrayscaleDilation:
     def __init__(self, kernel_size=5, p=0.5):
@@ -322,11 +349,11 @@ class GrayscaleDilation:
         return img
 
     def __call__(self, sample):
-        img, bw_img = sample
         if random.random() > self.p:
-            img = self.dilate(img)
-            bw_img = self.dilate(bw_img)
-        return img, bw_img
+            sample['img'] = self.dilate(sample['img'])
+            sample['bw_img'] = self.dilate(sample['bw_img'])
+            sample['bg_patch'] = self.dilate(sample['bg_patch'])
+        return sample
 
 class SaveHistory:
     def __init__(self, out_dir, out_type):

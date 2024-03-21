@@ -3,6 +3,7 @@ from . import font_transforms as FT
 from torchvision import transforms as T
 from pathlib import Path
 import nltk
+import torch
 from einops import rearrange
 from torch.nn.utils.rnn import pad_sequence
 
@@ -13,15 +14,15 @@ def pad_images(images, padding_value=1):
 
 
 class OnlineFontSquare(Dataset):
-    def __init__(self, fonts_path, backgrounds_path, text_sampler=None, transform=None, length=1000):
+    def __init__(self, fonts_path, backgrounds_path, text_sampler=None, transform=None, length=None):
         self.fonts_path = Path(fonts_path)
         self.fonts = list(Path(fonts_path).glob('*.ttf'))
         self.text_sampler = text_sampler
         self.transform = T.Compose([
             FT.RenderImage(self.fonts, calib_threshold=0.8, pad=20),
-            T.RandomRotation(3, fill=1),
+            FT.RandomRotation(3, fill=1),
             FT.RandomWarping(grid_shape=(5, 2)),
-            T.GaussianBlur(kernel_size=3),
+            FT.GaussianBlur(kernel_size=3),
             FT.RandomBackground(Path(backgrounds_path)),
             FT.TailorTensor(pad=3),
             FT.ToCustomTensor(),
@@ -34,25 +35,33 @@ class OnlineFontSquare(Dataset):
             FT.Normalize((0.5,), (0.5,))
         ]) if transform is None else transform
 
-        self.length = length
+        self.length = len(self.fonts) if length is None else length
 
     def __len__(self):
         return self.length
 
-    def __getitem__(self, _):
+    def __getitem__(self, font_id):
         text = self.text_sampler()
-        img, bw_img = self.transform(text)
-        return img, bw_img, text
+        sample = self.transform({'text': text, 'font_id': font_id})
+        return sample
 
     def collate_fn(self, batch):
-        imgs, bw_imgs, texts = zip(*batch)
-        imgs = pad_images(imgs)
-        bw_imgs = pad_images(bw_imgs)
-        return {
-            'img': imgs,
-            'bw_img': bw_imgs,
-            'text': texts
-        }
+        collate_batch = {}
+
+        for key in batch[0].keys():
+            val = batch[0][key]
+            if isinstance(val, torch.Tensor):
+                collate_batch[key] = pad_images([sample[key] for sample in batch])
+            elif isinstance(val, int):
+                collate_batch[key] = torch.IntTensor([sample[key] for sample in batch])
+            elif isinstance(val, float):
+                collate_batch[key] = torch.FloatTensor([sample[key] for sample in batch])
+            elif isinstance(val, bool):
+                collate_batch[key] = torch.BoolTensor([sample[key] for sample in batch])
+            else:
+                collate_batch[key] = [sample[key] for sample in batch]
+
+        return collate_batch
 
 
 class TextSampler:
