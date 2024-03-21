@@ -95,9 +95,8 @@ def train():
     parser.add_argument("--epochs", type=int, default=10000, help="number of epochs to train the model")
     parser.add_argument("--lr", type=float, default=1e-4, help="learning rate")
     parser.add_argument("--seed", type=int, default=24, help="random seed")
-    parser.add_argument('--model_save_interval', type=int, default=10, help="model save interval")
-    parser.add_argument("--log_interval", type=int, default=100, help="log interval")
-    parser.add_argument("--eval_epochs", type=int, default=10, help="eval interval")
+    parser.add_argument('--model_save_interval', type=int, default=1, help="model save interval")
+    parser.add_argument("--eval_epochs", type=int, default=1, help="eval interval")
     parser.add_argument("--resume_id", type=str, default=None, help="resume from checkpoint")
     parser.add_argument("--vae_config", type=str, default='configs/vae/scratch_htg.json', help='config path')
 
@@ -124,7 +123,7 @@ def train():
     args.kl_scale = 1e-6
     args.max_grad_norm = 1.0
     args.height = 64
-    args.num_samples_per_epoch = 32
+    args.num_samples_per_epoch = None
 
     args.run_name = args.resume_id if args.resume_id else uuid.uuid4().hex[:4]
     args.output_dir = Path(args.output_dir) / args.run_name
