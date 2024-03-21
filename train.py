@@ -227,11 +227,14 @@ def train():
                         disable=not accelerator.is_local_main_process)
     progress_bar.set_description("Steps")
 
+    wandb.watch(vae, log="all", log_freq=1)
+
     for epoch in range(train_state.epoch, args.epochs):
         vae.train()
         train_loss = 0.
 
         for step, batch in enumerate(train_loader):
+
             with accelerator.autocast():
                 with accelerator.accumulate(vae):
                     image = batch['img'].to(weight_dtype)
@@ -251,8 +254,9 @@ def train():
                     loss = mse_loss + args.kl_scale * kl_loss
 
                     if not torch.isfinite(loss):
-                        logger.info("\nWARNING: non-finite loss, ending training ")
-                        return
+                        logger.info("\nWARNING: non-finite loss")
+                        optimizer.zero_grad()
+                        continue
 
                     avg_loss = accelerator.gather(loss.repeat(args.train_batch_size)).mean()
                     train_loss += avg_loss.item() / args.gradient_accumulation_steps
