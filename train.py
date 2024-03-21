@@ -6,6 +6,7 @@ from pathlib import Path
 import math
 import os
 from tqdm.auto import tqdm
+import uuid
 
 import torch
 from torch.optim import AdamW
@@ -22,7 +23,6 @@ from accelerate import Accelerator
 from accelerate.logging import get_logger
 from accelerate.utils import ProjectConfiguration, set_seed
 
-
 import diffusers
 from diffusers import AutoencoderKL
 from diffusers.optimization import get_scheduler
@@ -31,14 +31,16 @@ from diffusers.utils import is_wandb_available
 
 from PIL import Image
 
+from train_utils import TrainState
 from datasets import OnlineFontSquare, TextSampler
+
 # from models.vae import VAEModel
 # from models.configuration_vae import VAEConfig
 
 logging.basicConfig(
-        format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
-        datefmt="%m/%d/%Y %H:%M:%S",
-        level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
+    datefmt="%m/%d/%Y %H:%M:%S",
+    level=logging.INFO,
 )
 logger = get_logger(__name__)
 
@@ -63,7 +65,7 @@ def log_validation(args, eval_loader, vae, accelerator, weight_dtype, epoch):
 
         pred = vae_model.module.decode(z).sample if accelerator.num_processes > 1 else vae_model.decode(z).sample
         kl_loss = posterior.kl().mean()
-        mse_loss = F.mse_loss(pred, target[:, :, :, :pred.shape[3]], reduction='mean')
+        mse_loss = F.mse_loss(pred, target, reduction='mean')
 
         loss = mse_loss + args.kl_scale * kl_loss
         eval_loss += loss.item()
@@ -75,7 +77,8 @@ def log_validation(args, eval_loader, vae, accelerator, weight_dtype, epoch):
     accelerator.log({
         "eval_loss": eval_loss / len(eval_loader),
         "Original (left), Reconstruction (right)":
-            [wandb.Image(torchvision.utils.make_grid(image, nrow=grid_nrows, normalize=True, value_range=(-1, 1))) for _, image in enumerate(images)]
+            [wandb.Image(torchvision.utils.make_grid(image, nrow=grid_nrows, normalize=True, value_range=(-1, 1))) for
+             _, image in enumerate(images)]
     })
 
     del vae_model
@@ -91,8 +94,10 @@ def train():
     parser.add_argument("--epochs", type=int, default=10000, help="number of epochs to train the model")
     parser.add_argument("--lr", type=float, default=0.001, help="learning rate")
     parser.add_argument("--seed", type=int, default=24, help="random seed")
+    parser.add_argument('--model_save_interval', type=int, default=10, help="model save interval")
     parser.add_argument("--log_interval", type=int, default=100, help="log interval")
     parser.add_argument("--eval_epochs", type=int, default=10, help="eval interval")
+    parser.add_argument("--resume_id", type=str, default='b832', help="resume from checkpoint")
 
     parser.add_argument("--lr_scheduler", type=str, default="constant",
                         choices=["linear", "cosine", "cosine_with_restarts", "polynomial",
@@ -118,6 +123,11 @@ def train():
     args.kl_scale = 1e-6
     args.max_grad_norm = 1.0
     args.height = 64
+    args.num_samples_per_epoch = 32
+
+    args.run_name = args.resume_id if args.resume_id else uuid.uuid4().hex[:4]
+    args.output_dir = Path(args.output_dir) / args.run_name
+    args.logging_dir = Path(args.logging_dir) / args.run_name
 
     accelerator_project_config = ProjectConfiguration(
         project_dir=str(args.output_dir),
@@ -146,6 +156,7 @@ def train():
 
     vae = AutoencoderKL(latent_channels=1, out_channels=1)  # TODO VAE CONFIG
     # vae = AutoencoderKL.from_pretrained("stabilityai/stable-diffusion-2", subfolder='vae')
+
     vae.requires_grad_(True)
     if args.gradient_checkpointing:
         vae.enable_gradient_checkpointing()
@@ -159,11 +170,15 @@ def train():
         weight_decay=args.adam_weight_decay,
         eps=args.adam_epsilon)
 
-    train_dataset = OnlineFontSquare('files/font_square/fonts', 'files/font_square/backgrounds', TextSampler(8, 32, 6), length=1000)
-    eval_dataset = OnlineFontSquare('files/font_square/fonts', 'files/font_square/backgrounds', TextSampler(8, 32, 6), length=64)
+    train_dataset = OnlineFontSquare('files/font_square/fonts', 'files/font_square/backgrounds', TextSampler(8, 32, 6),
+                                     length=args.num_samples_per_epoch)
+    eval_dataset = OnlineFontSquare('files/font_square/fonts', 'files/font_square/backgrounds', TextSampler(8, 32, 6),
+                                    length=64)
 
-    eval_loader = DataLoader(eval_dataset, batch_size=args.eval_batch_size, shuffle=False, collate_fn=eval_dataset.collate_fn, num_workers=4)
-    train_loader = DataLoader(train_dataset, batch_size=args.train_batch_size, shuffle=False, collate_fn=train_dataset.collate_fn, num_workers=4)
+    eval_loader = DataLoader(eval_dataset, batch_size=args.eval_batch_size, shuffle=False,
+                             collate_fn=eval_dataset.collate_fn, num_workers=4)
+    train_loader = DataLoader(train_dataset, batch_size=args.train_batch_size, shuffle=False,
+                              collate_fn=train_dataset.collate_fn, num_workers=4)
 
     lr_scheduler = get_scheduler(
         args.lr_scheduler,
@@ -182,8 +197,9 @@ def train():
         weight_dtype = torch.bfloat16
 
     if accelerator.is_main_process:
+        wandb_args = {"wandb": {"entity": "fomo_aiisdh", "name": args.run_name}}
         tracker_config = dict(vars(args))
-        accelerator.init_trackers(args.wandb_project_name, tracker_config)
+        accelerator.init_trackers(args.wandb_project_name, tracker_config, wandb_args)
 
     num_update_steps_per_epoch = math.ceil(len(train_loader) / args.gradient_accumulation_steps)
     args.max_train_steps = args.epochs * num_update_steps_per_epoch
@@ -199,15 +215,17 @@ def train():
     logger.info(f"  Gradient Accumulation steps = {args.gradient_accumulation_steps}")
     logger.info(f"  Total parameters count = {args.total_params}")
 
-    global_step = 0
-    starting_epoch = 0
+    train_state = TrainState(global_step=0, epoch=0)
+    accelerator.register_for_checkpointing(train_state)
+    if args.resume_id:
+        accelerator.load_state()
+        accelerator.project_configuration.iteration = train_state.epoch
 
-    # todo resume
-
-    progress_bar = tqdm(range(global_step, args.max_train_steps), disable=not accelerator.is_local_main_process)
+    progress_bar = tqdm(range(train_state.global_step, args.max_train_steps),
+                        disable=not accelerator.is_local_main_process)
     progress_bar.set_description("Steps")
 
-    for epoch in range(starting_epoch, args.epochs):
+    for epoch in range(train_state.epoch, args.epochs):
         vae.train()
         train_loss = 0.
 
@@ -226,7 +244,7 @@ def train():
 
                     pred = vae.module.decode(z).sample if accelerator.num_processes > 1 else vae.decode(z).sample
                     kl_loss = posterior.kl().mean()
-                    mse_loss = F.mse_loss(pred, target[:, :, :, :pred.shape[3]], reduction='mean')
+                    mse_loss = F.mse_loss(pred, target, reduction='mean')
 
                     loss = mse_loss + args.kl_scale * kl_loss
 
@@ -247,7 +265,7 @@ def train():
 
                 if accelerator.sync_gradients:
                     progress_bar.update(1)
-                    global_step += 1
+                    train_state.global_step += 1
                     accelerator.log({"train_loss": train_loss})
                     train_loss = 0.0
 
@@ -262,14 +280,16 @@ def train():
                 accelerator.log(logs)
                 progress_bar.set_postfix(**logs)
 
+        train_state.epoch += 1
         if accelerator.is_main_process:
             if epoch % args.eval_epochs == 0:
+                accelerator.save_state()
                 with torch.no_grad():
                     log_validation(args, eval_loader, vae, accelerator, weight_dtype, epoch)
 
-                    output_dir = f"epoch_{epoch}"
-                    output_dir = args.output_dir / output_dir
-                    accelerator.save_state(str(output_dir))
+            if epoch % args.model_save_interval == 0:
+                vae = accelerator.unwrap_model(vae)
+                vae.save_pretrained(args.output_dir / f"model_{epoch}")
 
     if accelerator.is_main_process:
         vae = accelerator.unwrap_model(vae)
