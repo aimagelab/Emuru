@@ -27,6 +27,7 @@ from diffusers import AutoencoderKL
 from diffusers.optimization import get_scheduler
 from diffusers.training_utils import EMAModel
 from diffusers.utils import is_wandb_available
+import json
 
 from PIL import Image
 
@@ -43,14 +44,16 @@ logging.basicConfig(
 logger = get_logger(__name__)
 
 
+@torch.inference_mode()
 def main():
-    accelerator = Accelerator()
+    vae = AutoencoderKL.from_pretrained(r'/home/fquattrini/emuru/results/e685/model_170')
 
-    model = AutoencoderKL(latent_channels=1, out_channels=1)
-    accelerator.load_state('/home/fquattrini/emuru/results/checkpoints/checkpoint_1')
+    # take image from fontsquare
+    # posterior = vae.encode(image).latent_dist
+    # z = posterior.sample()
 
-    z = torch.randn(1, 1, 64, 64)
-    pred = model.decoder(z)
+    z = torch.randn(1, 1, 64, 128)
+    pred = vae.decoder(z)
 
 
 if __name__ == '__main__':

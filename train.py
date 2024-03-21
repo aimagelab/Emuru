@@ -292,7 +292,7 @@ def train():
 
             if epoch % args.model_save_interval == 0:
                 vae = accelerator.unwrap_model(vae)
-                vae.save_pretrained(args.output_dir / f"model_{epoch}")
+                vae.save_pretrained(args.output_dir / f"model_{epoch:04d}")
 
     if accelerator.is_main_process:
         vae = accelerator.unwrap_model(vae)
