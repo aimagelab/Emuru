@@ -16,8 +16,7 @@ import numpy as np
 import torch.nn.functional as F
 import torch.utils.checkpoint
 import torchvision
-from torchvision import transforms
-from diffusers import AutoencoderKL
+
 from transformers import Trainer
 import accelerate
 from accelerate import Accelerator
@@ -25,7 +24,7 @@ from accelerate.logging import get_logger
 from accelerate.utils import ProjectConfiguration, set_seed
 
 import diffusers
-from diffusers import AutoencoderKL
+from models.autoencoder_kl import AutoencoderKL
 from diffusers.optimization import get_scheduler
 from diffusers.training_utils import EMAModel
 from diffusers.utils import is_wandb_available
