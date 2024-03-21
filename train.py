@@ -7,6 +7,7 @@ import math
 import os
 from tqdm.auto import tqdm
 import uuid
+import json
 
 import torch
 from torch.optim import AdamW
@@ -92,12 +93,13 @@ def train():
     parser.add_argument("--train_batch_size", type=int, default=16, help="train batch size")
     parser.add_argument("--eval_batch_size", type=int, default=32, help="eval batch size")
     parser.add_argument("--epochs", type=int, default=10000, help="number of epochs to train the model")
-    parser.add_argument("--lr", type=float, default=0.001, help="learning rate")
+    parser.add_argument("--lr", type=float, default=1e-4, help="learning rate")
     parser.add_argument("--seed", type=int, default=24, help="random seed")
     parser.add_argument('--model_save_interval', type=int, default=10, help="model save interval")
     parser.add_argument("--log_interval", type=int, default=100, help="log interval")
     parser.add_argument("--eval_epochs", type=int, default=10, help="eval interval")
-    parser.add_argument("--resume_id", type=str, default='b832', help="resume from checkpoint")
+    parser.add_argument("--resume_id", type=str, default=None, help="resume from checkpoint")
+    parser.add_argument("--vae_config", type=str, default='configs/vae/scratch_htg.json', help='config path')
 
     parser.add_argument("--lr_scheduler", type=str, default="constant",
                         choices=["linear", "cosine", "cosine_with_restarts", "polynomial",
@@ -106,7 +108,6 @@ def train():
     args = parser.parse_args()
 
     args.mixed_precision = 'bf16'
-    args.resolution = 64
     args.use_8bit_adam = False  # todo implement it
     args.gradient_accumulation_steps = 1
     args.checkpoints_total_limit = 5
@@ -154,16 +155,18 @@ def train():
         args.logging_dir = Path(args.logging_dir)
         args.logging_dir.mkdir(parents=True, exist_ok=True)
 
-    vae = AutoencoderKL(latent_channels=1, out_channels=1)  # TODO VAE CONFIG
-    # vae = AutoencoderKL.from_pretrained("stabilityai/stable-diffusion-2", subfolder='vae')
+    with open(args.vae_config, "r") as f:
+        config_dict = json.load(f)
 
+    vae = AutoencoderKL.from_config(config_dict)  # TODO NO DROPOUT IN THE CODE WTF
     vae.requires_grad_(True)
+
     if args.gradient_checkpointing:
         vae.enable_gradient_checkpointing()
     if args.scale_lr:
         args.lr = args.lr * args.gradient_accumulation_steps * args.train_batch_size * accelerator.num_processes
 
-    optimizer = torch.optim.AdamW(
+    optimizer = torch.optim.Adam(
         vae.parameters(),
         lr=args.lr,
         betas=(args.adam_beta1, args.adam_beta2),
@@ -282,8 +285,8 @@ def train():
 
         train_state.epoch += 1
         if accelerator.is_main_process:
+            accelerator.save_state()
             if epoch % args.eval_epochs == 0:
-                accelerator.save_state()
                 with torch.no_grad():
                     log_validation(args, eval_loader, vae, accelerator, weight_dtype, epoch)
 
