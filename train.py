@@ -90,7 +90,7 @@ def train():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output_dir", type=str, default='results', help="output directory")
     parser.add_argument("--logging_dir", type=str, default='results', help="logging directory")
-    parser.add_argument("--train_batch_size", type=int, default=32, help="train batch size")
+    parser.add_argument("--train_batch_size", type=int, default=16, help="train batch size")
     parser.add_argument("--eval_batch_size", type=int, default=32, help="eval batch size")
     parser.add_argument("--epochs", type=int, default=10000, help="number of epochs to train the model")
     parser.add_argument("--lr", type=float, default=1e-4, help="learning rate")
@@ -106,7 +106,7 @@ def train():
 
     args = parser.parse_args()
 
-    args.mixed_precision = 'bf16'
+    args.mixed_precision = 'no'
     args.use_8bit_adam = False  # todo implement it
     args.gradient_accumulation_steps = 1
     args.checkpoints_total_limit = 5
@@ -251,9 +251,8 @@ def train():
                     loss = mse_loss + args.kl_scale * kl_loss
 
                     if not torch.isfinite(loss):
-                        pred_mean = pred.mean()
-                        target_mean = target.mean()
                         logger.info("\nWARNING: non-finite loss, ending training ")
+                        return
 
                     avg_loss = accelerator.gather(loss.repeat(args.train_batch_size)).mean()
                     train_loss += avg_loss.item() / args.gradient_accumulation_steps

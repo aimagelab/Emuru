@@ -46,13 +46,13 @@ logger = get_logger(__name__)
 
 @torch.inference_mode()
 def main():
-    vae = AutoencoderKL.from_pretrained(r'/home/fquattrini/emuru/results/e685/model_170')
+    vae = AutoencoderKL.from_pretrained(r'/home/fquattrini/emuru/results/ca5f/model_0010')
 
     # take image from fontsquare
     # posterior = vae.encode(image).latent_dist
     # z = posterior.sample()
 
-    z = torch.randn(1, 1, 64, 128)
+    z = torch.randn(1, 1, 8, 64)
     pred = vae.decoder(z)
 
 
