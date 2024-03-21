@@ -12,6 +12,7 @@ from PIL import Image
 from .tps import TPS
 import json
 import string
+from collections import defaultdict
 
 
 def mask_coords(mask):
@@ -68,22 +69,6 @@ class RenderImage(object):
         return sample
 
 
-class RandomResizedCrop:
-    def __init__(self, ratio_eps, scale):
-        self.scale = scale
-        self.ratio_eps = ratio_eps
-
-    def __call__(self, sample):
-        img = sample['font_img']
-        ratio = img.shape[1] / img.shape[0]
-        ratio = (ratio - self.ratio_eps, ratio + self.ratio_eps)
-
-        i, j, h, w = T.RandomResizedCrop.get_params(img, self.scale, ratio, antialias=True)
-        sample['font_img'] = F.resized_crop(img.unsqueeze(0), i, j, h, w, img.shape, antialias=True).squeeze(0)
-        sample.record(self, ijhw=(i, j, h, w))
-        return sample
-
-
 class RandomWarping:
     def __init__(self, std=0.05, grid_shape=(5,3)):
         self.std = std
@@ -125,35 +110,6 @@ class GaussianBlur(T.GaussianBlur):
     def __call__(self, sample):
         sample['img'] = super().forward(sample['img'])
         return sample
-
-class ToRGB:
-    def __call__(self, img):
-        rgb_img = Image.new("RGB", img.size)
-        rgb_img.paste(img)
-        return rgb_img
-
-class FixedWidth:
-    def __init__(self, width):
-        self.width = width
-
-    def __call__(self, img):
-        c, h, w = img.shape
-        canvas = torch.zeros((c, h, self.width))
-        width = min(w, self.width)
-        canvas[:, :, :width] = img[:, :, :width]
-        return canvas
-
-
-class FixedHeight:
-    def __init__(self, height):
-        self.height = height
-
-    def __call__(self, img):
-        c, h, w = img.shape
-        canvas = torch.zeros((c, self.height, w))
-        height = min(h, self.height)
-        canvas[:, :height, :] = img[:, :height, :]
-        return canvas
 
 
 class ImgResize:
@@ -225,6 +181,7 @@ class RandomBackground(object):
         sample['bg_patch'] = bg_patch
         return sample
 
+
 class TailorTensor:
     def __init__(self, pad=0):
         self.pad = pad
@@ -243,7 +200,8 @@ class TailorTensor:
         sample['img'], sample['bg_patch'] = img, bg_patch
         return sample
 
-class ToCustomTensor:
+
+class MergeWithBackground:
     def __init__(self, min_alpha=0.5, max_alpha=1.0):
         self.min_alpha = min_alpha
         self.max_alpha = max_alpha
@@ -280,44 +238,11 @@ class ColorJitter(T.ColorJitter):
         return sample
 
 
-# class RandomAdjustSharpness(T.RandomAdjustSharpness):
-#     def forward(self, sample):
-#         text, img = sample
-#         return text, super().forward(img)
-
-
 class RandomGrayscale(T.RandomGrayscale):
     def forward(self, sample):
         sample['img'] = super().forward(sample['img'])
         return sample
 
-
-# class RandomSolarize(T.RandomSolarize):
-#     def forward(self, sample):
-#         text, img = sample
-#         return text, super().forward(img)
-
-
-# class RandomInvert(T.RandomSolarize):
-#     def __init__(self, p=0.5):
-#         super().__init__(0, p)
-#
-#     def forward(self, sample):
-#         text, img = sample
-#         return text, super().forward(img)
-
-
-class RandomAffine(T.RandomAffine):
-    def forward(self, sample):
-        text, img = sample
-        channels = img.shape[0]
-        if channels == 3:
-            img = super().forward(img)
-        elif channels == 4:
-            img[0] = super().forward(img[0].unsqueeze(0))
-        else:
-            raise NotImplementedError
-        return text, img
 
 class GrayscaleErosion:
     def __init__(self, kernel_size=5, p=0.5):
@@ -337,6 +262,7 @@ class GrayscaleErosion:
             sample['bg_patch'] = self.erode(sample['bg_patch'])
         return sample
 
+
 class GrayscaleDilation:
     def __init__(self, kernel_size=5, p=0.5):
         self.kernel_size = kernel_size
@@ -355,24 +281,24 @@ class GrayscaleDilation:
             sample['bg_patch'] = self.dilate(sample['bg_patch'])
         return sample
 
-class SaveHistory:
-    def __init__(self, out_dir, out_type):
-        self.out_dir = out_dir
-        self.out_type = out_type
-        os.makedirs(out_dir, exist_ok=True)
+
+class TimedCompose:
+    def __init__(self, transforms: Sequence):
+        self.transforms = transforms
+        self.times = defaultdict(list)
 
     def __call__(self, sample):
-        path = os.path.join(self.out_dir, sample['text'])
-        if self.out_type == 'json':
-            with open(path + '.json', 'w') as f:
-                json.dump(sample.to_dict(), f)
-        elif self.out_type == 'pickle':
-            with open(os.path.join(self.out_dir, sample['text']) + '.pkl', 'wb') as f:
-                pickle.dump(sample.to_dict(), f)
-        elif self.out_type == 'png':
-            F.to_pil_image(sample['img']).save(path + '.png')
-        elif self.out_type == 'jpg':
-            F.to_pil_image(sample['img']).save(path + '.jpg')
-        else:
-            raise NotImplementedError
+        for t in self.transforms:
+            start = time.time()
+            sample = t(sample)
+            self.times[t.__class__.__name__].append(time.time() - start)
         return sample
+    
+    def print_times(self):
+        max_width = max(len(k) for k in self.times.keys())
+        self.times = {k: np.mean(v) for k, v in self.times.items()}
+        total_time = sum(self.times.values())
+        for k, v in self.times.items():
+            print(f'{k.ljust(max_width)} {v:.05f}s ({v / total_time:.02%})')
+        print(f'Total time: {total_time:.05f}s')
+        self.times = defaultdict(list)

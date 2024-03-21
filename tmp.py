@@ -20,12 +20,13 @@ random.seed(0)
 torch.manual_seed(0)
 
 dataset = OnlineFontSquare('files/font_square/fonts', 'files/font_square/backgrounds', TextSampler(8, 32, 6))
-loader = DataLoader(dataset, batch_size=64, shuffle=True, collate_fn=dataset.collate_fn, num_workers=8)
+loader = DataLoader(dataset, batch_size=64, shuffle=True, collate_fn=dataset.collate_fn, num_workers=0)
 
-for batch in tqdm(loader):
+for i, batch in tqdm(enumerate(loader)):
     # save_image(make_grid(imgs, nrow=4), 'test.png')
     # save_image(make_grid(bw_imgs, nrow=4), 'test_bw.png')
-    # break
-    pass
+    if i >= 20:
+        break
+dataset.transform.print_times()
 
 print('done')

@@ -18,14 +18,14 @@ class OnlineFontSquare(Dataset):
         self.fonts_path = Path(fonts_path)
         self.fonts = list(Path(fonts_path).glob('*.ttf'))
         self.text_sampler = text_sampler
-        self.transform = T.Compose([
+        self.transform = FT.TimedCompose([
             FT.RenderImage(self.fonts, calib_threshold=0.8, pad=20),
             FT.RandomRotation(3, fill=1),
             FT.RandomWarping(grid_shape=(5, 2)),
             FT.GaussianBlur(kernel_size=3),
             FT.RandomBackground(Path(backgrounds_path)),
             FT.TailorTensor(pad=3),
-            FT.ToCustomTensor(),
+            FT.MergeWithBackground(),
             # FT.GrayscaleErosion(kernel_size=2, p=0.05),
             FT.GrayscaleDilation(kernel_size=2, p=0.1),
 
