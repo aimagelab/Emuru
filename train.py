@@ -90,13 +90,13 @@ def train():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output_dir", type=str, default='results', help="output directory")
     parser.add_argument("--logging_dir", type=str, default='results', help="logging directory")
-    parser.add_argument("--train_batch_size", type=int, default=16, help="train batch size")
+    parser.add_argument("--train_batch_size", type=int, default=32, help="train batch size")
     parser.add_argument("--eval_batch_size", type=int, default=32, help="eval batch size")
     parser.add_argument("--epochs", type=int, default=10000, help="number of epochs to train the model")
     parser.add_argument("--lr", type=float, default=1e-4, help="learning rate")
     parser.add_argument("--seed", type=int, default=24, help="random seed")
-    parser.add_argument('--model_save_interval', type=int, default=1, help="model save interval")
-    parser.add_argument("--eval_epochs", type=int, default=1, help="eval interval")
+    parser.add_argument('--model_save_interval', type=int, default=5, help="model save interval")
+    parser.add_argument("--eval_epochs", type=int, default=5, help="eval interval")
     parser.add_argument("--resume_id", type=str, default=None, help="resume from checkpoint")
     parser.add_argument("--vae_config", type=str, default='configs/vae/scratch_htg.json', help='config path')
 
@@ -284,8 +284,8 @@ def train():
 
         train_state.epoch += 1
         if accelerator.is_main_process:
-            accelerator.save_state()
             if epoch % args.eval_epochs == 0:
+                accelerator.save_state()
                 with torch.no_grad():
                     log_validation(args, eval_loader, vae, accelerator, weight_dtype, epoch)
 
