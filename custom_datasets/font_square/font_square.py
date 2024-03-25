@@ -14,16 +14,35 @@ def pad_images(images, padding_value=1):
 
 
 class OnlineFontSquare(Dataset):
-    def __init__(self, fonts_path, backgrounds_path, text_sampler=None, transform=None, length=None):
-        self.fonts_path = Path(fonts_path)
-        self.fonts = list(Path(fonts_path).glob('*.ttf'))
+    def __init__(self, fonts, backgrounds, text_sampler=None, transform=None, length=None):
+        fonts = Path(fonts) if isinstance(fonts, str) else fonts
+        backgrounds = Path(backgrounds) if isinstance(backgrounds, str) else backgrounds
+        
+        if isinstance(fonts, Path) and fonts.is_dir():
+            self.fonts = list(fonts.glob('*.ttf'))
+        elif isinstance(fonts, Path) and fonts.is_file():
+            self.fonts = [fonts]
+        elif isinstance(fonts, list):
+            self.fonts = fonts
+        else:
+            raise ValueError(f'Fonts must be a directory or a list of paths. Got {type(fonts)}')
+        
+        if isinstance(backgrounds, Path) and backgrounds.is_dir():
+            backgrounds = [p for p in backgrounds.rglob('*') if p.suffix in ('.jpg', '.png', '.jpeg')]
+        elif isinstance(backgrounds, Path) and backgrounds.is_file():
+            backgrounds = [backgrounds]
+        elif isinstance(backgrounds, list):
+            backgrounds = backgrounds
+        else:
+            raise ValueError(f'Backgrounds must be a directory or a list of paths. Got {type(backgrounds)}')
+        
         self.text_sampler = text_sampler
-        self.transform = FT.TimedCompose([
+        self.transform = T.Compose([
             FT.RenderImage(self.fonts, calib_threshold=0.8, pad=20),
             FT.RandomRotation(3, fill=1),
-            FT.RandomWarping(grid_shape=(5, 2)),
+            FT.RandomWarping(grid_shape=(5, 2), p=0.25),
             FT.GaussianBlur(kernel_size=3),
-            FT.RandomBackground(Path(backgrounds_path)),
+            FT.RandomBackground(backgrounds),
             FT.TailorTensor(pad=3),
             FT.MergeWithBackground(),
             # FT.GrayscaleErosion(kernel_size=2, p=0.05),
@@ -65,6 +84,17 @@ class OnlineFontSquare(Dataset):
         return collate_batch
 
 
+class HFDataCollector:
+    def __init__(self, tokenizer):
+        self.tokenizer = tokenizer
+
+    def __call__(self, batch):
+        txts = [sample['text'] for sample in batch]
+        res = self.tokenizer(txts, padding=True, return_tensors='pt', return_attention_mask=True, return_length=True)
+        res['img'] = pad_images([sample['img'] for sample in batch])
+        return res
+
+
 class TextSampler:
     def __init__(self, min_len, max_len, count, exponent=1, charset=None):
         self.min_len = min_len
@@ -102,3 +132,11 @@ class TextSampler:
         if self.max_len is not None and len(txt) > self.max_len:
             txt = txt[:self.max_len]
         return txt
+    
+
+class FixedTextSampler:
+    def __init__(self, text):
+        self.text = text
+
+    def __call__(self):
+        return self.text

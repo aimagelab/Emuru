@@ -160,7 +160,7 @@ cython_debug/
 #.idea/
 
 files/
-test.png
-test_bw.png
+*.png
 /.idea
 .vscode
+wandb/

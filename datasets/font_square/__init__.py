@@ -1,1 +1,0 @@
-from .font_square import OnlineFontSquare, TextSampler

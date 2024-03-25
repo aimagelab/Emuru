@@ -13,6 +13,7 @@ from .tps import TPS
 import json
 import string
 from collections import defaultdict
+from pathlib import Path
 
 
 def mask_coords(mask):
@@ -61,8 +62,8 @@ class RenderImage(object):
         try:
             np_img = render_class.render(sample['text'], return_np=True, action='top_left', pad=self.pad)
         except OSError:
-            print(f'Error rendering {sample["text"]} with font {self.ids_to_fonts[font_id]}. Try to render only ascii letters and digits.')
-            sample['text'] = ''.join([c for c in sample['text'] if c in set(string.ascii_letters + string.digits + ' ')])
+            print(f'Error rendering "{sample["text"]}" with font {self.ids_to_fonts[font_id]}. Try to render only ascii letters.')
+            sample['text'] = ''.join([c for c in sample['text'] if c in set(string.ascii_lowercase + ' ')])
             np_img = render_class.render(sample['text'], return_np=True, action='top_left', pad=self.pad)
 
         sample['img'] = torch.from_numpy(np_img).unsqueeze(0).float()
@@ -166,9 +167,8 @@ class PadDivisible:
 
 class RandomBackground(object):
     start_time = time.time()
-    def __init__(self, backgrounds_path):
-        self.bgs = [Image.open(path) for path in backgrounds_path.rglob('*') if path.suffix in ('.jpg', '.png', '.jpeg')]
-        self.bgs = [F.to_tensor(img.convert('RGB')) for img in self.bgs]
+    def __init__(self, backgrounds):
+        self.bgs = [F.to_tensor(Image.open(path).convert('RGB')) for path in backgrounds]
 
     def get_available_idx(self, img_h, img_w):
         return [bg for bg in self.bgs if bg.shape[1] >= img_h and bg.shape[2] >= img_w] + [None]  # None is for white background

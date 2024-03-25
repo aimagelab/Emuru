@@ -28,10 +28,8 @@ from diffusers.optimization import get_scheduler
 from diffusers.training_utils import EMAModel
 from diffusers.utils import is_wandb_available
 import json
-
 from PIL import Image
-
-from datasets import OnlineFontSquare, TextSampler
+from torchvision.utils import save_image
 
 # from models.vae import VAEModel
 # from models.configuration_vae import VAEConfig
@@ -46,14 +44,19 @@ logger = get_logger(__name__)
 
 @torch.inference_mode()
 def main():
-    vae = AutoencoderKL.from_pretrained(r'/home/fquattrini/emuru/results/ca5f/model_0010')
+    vae = AutoencoderKL.from_pretrained('files/checkpoints/ca5f')
 
-    # take image from fontsquare
-    # posterior = vae.encode(image).latent_dist
-    # z = posterior.sample()
+    img = Image.open('test.png')
+    img = transforms.ToTensor()(img).unsqueeze(0)
+    img = img * 2 - 1
+    posterior = vae.encode(img).latent_dist
+    z = posterior.sample()
 
-    z = torch.randn(1, 1, 8, 64)
+    # z = torch.randn(1, 1, 8, 64)
     pred = vae.decoder(z)
+    save_image(pred[0], 'test_recon.png')
+    save_image(pred[0] * -1, 'test_recon_2.png')
+    print()
 
 
 if __name__ == '__main__':
