@@ -31,7 +31,7 @@ from diffusers.utils import is_wandb_available
 
 from PIL import Image
 
-from train_utils import TrainState
+from utils import TrainState
 from datasets import OnlineFontSquare, TextSampler
 
 # from models.vae import VAEModel

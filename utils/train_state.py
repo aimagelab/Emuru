@@ -1,4 +1,3 @@
-
 class TrainState:
     def __init__(self, global_step, epoch):
         self.global_step = global_step
