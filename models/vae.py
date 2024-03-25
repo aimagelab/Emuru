@@ -68,6 +68,7 @@ class Encoder(nn.Module):
         act_fn: str = "silu",
         double_z: bool = True,
         mid_block_add_attention=True,
+        dropout: float = 0.0,
     ):
         super().__init__()
         self.layers_per_block = layers_per_block
@@ -102,6 +103,7 @@ class Encoder(nn.Module):
                 resnet_groups=norm_num_groups,
                 attention_head_dim=output_channel,
                 temb_channels=None,
+                dropout=dropout,
             )
             self.down_blocks.append(down_block)
 
