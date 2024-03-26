@@ -177,9 +177,9 @@ def train():
                                     length=64)
 
     eval_loader = DataLoader(eval_dataset, batch_size=args.eval_batch_size, shuffle=False,
-                             collate_fn=eval_dataset.collate_fn, num_workers=4)
+                             collate_fn=collate_fn, num_workers=4)
     train_loader = DataLoader(train_dataset, batch_size=args.train_batch_size, shuffle=False,
-                              collate_fn=train_dataset.collate_fn, num_workers=4)
+                              collate_fn=collate_fn, num_workers=4)
 
     lr_scheduler = get_scheduler(
         args.lr_scheduler,

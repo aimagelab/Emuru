@@ -7,17 +7,66 @@ import torch
 from einops import rearrange
 from torch.nn.utils.rnn import pad_sequence
 
+from ..alphabet import Alphabet
+from ..constants import (
+    START_OF_SEQUENCE,
+    END_OF_SEQUENCE,
+    PAD,
+    FONT_SQUARE_CHARSET
+)
+from ..subsequent_mask import subsequent_mask
+
 
 def pad_images(images, padding_value=1):
     images = [rearrange(img, 'c h w -> w c h') for img in images]
     return rearrange(pad_sequence(images, padding_value=padding_value), 'w b c h -> b c h w')
 
 
+def collate_fn(batch):
+    images = []
+    images_bw = []
+    texts = []
+    names = []
+    text_logits_ctc = []
+    text_logits_s2s = []
+    texts_len = []
+    writers = []
+
+    for item in batch:
+        images.append(item['image'])
+        images_bw.append(item['image_bw'])
+        texts.append(item['text'])
+        names.append(item["name"])
+        text_logits_ctc.append(item['text_logits_ctc'])
+        text_logits_s2s.append(item['text_logits_s2s'])
+        texts_len.append(len(item['text']))
+        writers.append(item['writer'])
+
+    padding_value = 0  # TODO CHANGE IT AFTER REFACTORING
+    images = pad_images(images, padding_value=padding_value)
+    images_bw = pad_images(images_bw, padding_value=padding_value)
+    text_logits_ctc = pad_sequence(text_logits_ctc, padding_value=padding_value, batch_first=True)
+    text_logits_s2s = pad_sequence(text_logits_s2s, padding_value=padding_value, batch_first=True)
+    tgt_key_mask = subsequent_mask(text_logits_s2s.shape[-1] - 1)
+    tgt_key_padding_mask = (text_logits_s2s == 1)
+
+    return {
+        'images': images,
+        'images_bw': images_bw,
+        'texts': texts,
+        'names': names,
+        'text_logits_ctc': text_logits_ctc,
+        'text_logits_s2s': text_logits_s2s,
+        'tgt_key_mask': tgt_key_mask,
+        'tgt_key_padding_mask': tgt_key_padding_mask,
+    }
+
+
 class OnlineFontSquare(Dataset):
     def __init__(self, fonts, backgrounds, text_sampler=None, transform=None, length=None):
         fonts = Path(fonts) if isinstance(fonts, str) else fonts
         backgrounds = Path(backgrounds) if isinstance(backgrounds, str) else backgrounds
-        
+
         if isinstance(fonts, Path) and fonts.is_dir():
             self.fonts = list(fonts.glob('*.ttf'))
         elif isinstance(fonts, Path) and fonts.is_file():
@@ -26,7 +75,7 @@ class OnlineFontSquare(Dataset):
             self.fonts = fonts
         else:
             raise ValueError(f'Fonts must be a directory or a list of paths. Got {type(fonts)}')
-        
+
         if isinstance(backgrounds, Path) and backgrounds.is_dir():
             backgrounds = [p for p in backgrounds.rglob('*') if p.suffix in ('.jpg', '.png', '.jpeg')]
         elif isinstance(backgrounds, Path) and backgrounds.is_file():
@@ -35,7 +84,7 @@ class OnlineFontSquare(Dataset):
             backgrounds = backgrounds
         else:
             raise ValueError(f'Backgrounds must be a directory or a list of paths. Got {type(backgrounds)}')
-        
+
         self.text_sampler = text_sampler
         self.transform = T.Compose([
             FT.RenderImage(self.fonts, calib_threshold=0.8, pad=20),
@@ -56,6 +105,7 @@ class OnlineFontSquare(Dataset):
         ]) if transform is None else transform
 
         self.length = len(self.fonts) if length is None else length
+        self.alphabet = Alphabet(charset=FONT_SQUARE_CHARSET)
 
     def __len__(self):
         return self.length
@@ -63,25 +113,22 @@ class OnlineFontSquare(Dataset):
     def __getitem__(self, font_id):
         text = self.text_sampler()
         sample = self.transform({'text': text, 'font_id': font_id})
-        return sample
+        sos = self.alphabet.encode([START_OF_SEQUENCE])
+        eos = self.alphabet.encode([END_OF_SEQUENCE])
+        text_logits_ctc = self.alphabet.encode(text)
+        text_logits_s2s = torch.cat([sos, text_logits_ctc, eos])
+        unpadded_text_len = len(sample['text'])
 
-    def collate_fn(self, batch):
-        collate_batch = {}
-
-        for key in batch[0].keys():
-            val = batch[0][key]
-            if isinstance(val, torch.Tensor):
-                collate_batch[key] = pad_images([sample[key] for sample in batch])
-            elif isinstance(val, int):
-                collate_batch[key] = torch.IntTensor([sample[key] for sample in batch])
-            elif isinstance(val, float):
-                collate_batch[key] = torch.FloatTensor([sample[key] for sample in batch])
-            elif isinstance(val, bool):
-                collate_batch[key] = torch.BoolTensor([sample[key] for sample in batch])
-            else:
-                collate_batch[key] = [sample[key] for sample in batch]
-
-        return collate_batch
+        return {
+            'image': sample['img'],
+            'image_bw': sample['bw_img'],
+            'text': text,
+            'writer': font_id,
+            'text_logits_ctc': text_logits_ctc,
+            'text_logits_s2s': text_logits_s2s,
+            'unpadded_text_len': unpadded_text_len,
+            'name': f'{font_id}',
+        }
 
 
 class HFDataCollector:
@@ -132,7 +179,7 @@ class TextSampler:
         if self.max_len is not None and len(txt) > self.max_len:
             txt = txt[:self.max_len]
         return txt
-    
+
 
 class FixedTextSampler:
     def __init__(self, text):

@@ -24,7 +24,7 @@ from accelerate.logging import get_logger
 from accelerate.utils import ProjectConfiguration, set_seed
 
 import diffusers
-from models.autoencoder_kl import AutoencoderKL
+from models.htr import HTR
 from diffusers.optimization import get_scheduler
 from diffusers.training_utils import EMAModel
 from diffusers.utils import is_wandb_available
@@ -32,7 +32,8 @@ from diffusers.utils import is_wandb_available
 from PIL import Image
 
 from utils import TrainState
-from datasets import OnlineFontSquare, TextSampler
+from custom_datasets import OnlineFontSquare, TextSampler, collate_fn
+from models.smooth_ce import SmoothCrossEntropyLoss
 
 # from models.vae import VAEModel
 # from models.configuration_vae import VAEConfig
@@ -97,7 +98,7 @@ def train():
     parser.add_argument('--model_save_interval', type=int, default=5, help="model save interval")
     parser.add_argument("--eval_epochs", type=int, default=5, help="eval interval")
     parser.add_argument("--resume_id", type=str, default=None, help="resume from checkpoint")
-    parser.add_argument("--vae_config", type=str, default='configs/vae/scratch_htg.json', help='config path')
+    parser.add_argument("--htr_config", type=str, default='configs/htr/HTR_64x768.json', help='config path')
 
     parser.add_argument("--lr_scheduler", type=str, default="constant",
                         choices=["linear", "cosine", "cosine_with_restarts", "polynomial",
@@ -110,9 +111,8 @@ def train():
     args.gradient_accumulation_steps = 1
     args.checkpoints_total_limit = 5
     args.report_to = "wandb"
-    args.wandb_project_name = "vae_htg"
+    args.wandb_project_name = "emuru_htr"
     args.use_ema = False  # TODO IMPLEMENT IT
-    args.gradient_checkpointing = False
     args.scale_lr = False
     args.adam_beta1 = 0.9
     args.adam_beta2 = 0.999
@@ -153,33 +153,31 @@ def train():
         args.logging_dir = Path(args.logging_dir)
         args.logging_dir.mkdir(parents=True, exist_ok=True)
 
-    with open(args.vae_config, "r") as f:
+    with open(args.htr_config, "r") as f:
         config_dict = json.load(f)
 
-    vae = AutoencoderKL.from_config(config_dict)  # TODO NO DROPOUT IN THE CODE WTF
-    vae.requires_grad_(True)
+    htr = HTR.from_config(config_dict)
+    htr.requires_grad_(True)
 
-    if args.gradient_checkpointing:
-        vae.enable_gradient_checkpointing()
     if args.scale_lr:
         args.lr = args.lr * args.gradient_accumulation_steps * args.train_batch_size * accelerator.num_processes
 
     optimizer = torch.optim.Adam(
-        vae.parameters(),
+        htr.parameters(),
         lr=args.lr,
         betas=(args.adam_beta1, args.adam_beta2),
         weight_decay=args.adam_weight_decay,
         eps=args.adam_epsilon)
 
-    train_dataset = OnlineFontSquare('files/font_square/fonts', 'files/font_square/backgrounds', TextSampler(8, 32, 6),
-                                     length=args.num_samples_per_epoch)
-    eval_dataset = OnlineFontSquare('files/font_square/fonts', 'files/font_square/backgrounds', TextSampler(8, 32, 6),
-                                    length=64)
+    train_dataset = OnlineFontSquare('files/font_square/fonts', 'files/font_square/backgrounds',
+                                     TextSampler(8, 32, 6), length=args.num_samples_per_epoch)
+    eval_dataset = OnlineFontSquare('files/font_square/fonts', 'files/font_square/backgrounds',
+                                    TextSampler(8, 32, 6), length=64)
 
+    train_loader = DataLoader(train_dataset, batch_size=args.train_batch_size, shuffle=True,
+                              collate_fn=collate_fn, num_workers=4, persistent_workers=True)
     eval_loader = DataLoader(eval_dataset, batch_size=args.eval_batch_size, shuffle=False,
-                             collate_fn=eval_dataset.collate_fn, num_workers=4)
-    train_loader = DataLoader(train_dataset, batch_size=args.train_batch_size, shuffle=False,
-                              collate_fn=train_dataset.collate_fn, num_workers=4)
+                             collate_fn=collate_fn, num_workers=4, persistent_workers=True)
 
     lr_scheduler = get_scheduler(
         args.lr_scheduler,
@@ -188,8 +186,8 @@ def train():
         num_training_steps=args.epochs * args.gradient_accumulation_steps,
     )
 
-    vae, vae.encoder, vae.decoder, optimizer, train_loader, eval_loader, lr_scheduler = (
-        accelerator.prepare(vae, vae.encoder, vae.decoder, optimizer, train_loader, eval_loader, lr_scheduler))
+    vae, optimizer, train_loader, eval_loader, lr_scheduler = accelerator.prepare(
+        [htr, optimizer, train_loader, eval_loader, lr_scheduler])
 
     weight_dtype = torch.float32
     if accelerator.mixed_precision == "fp16":
@@ -207,7 +205,7 @@ def train():
     total_batch_size = (args.train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps)
     args.total_params = sum([p.numel() for p in vae.parameters()])
 
-    logger.info("***** Running training *****")
+    logger.info("***** Running HTR training *****")
     logger.info(f"  Num examples = {len(train_dataset)}")
     logger.info(f"  Num eval samples = {len(eval_dataset)}")
     logger.info(f"  Num Epochs = {args.epochs}")
@@ -228,22 +226,24 @@ def train():
 
     wandb.watch(vae, log="all", log_freq=1)
 
+    smooth_ce_loss = SmoothCrossEntropyLoss(tgt_pad_idx=train_dataset.alphabet.pad)
+
     for epoch in range(train_state.epoch, args.epochs):
-        vae.train()
+        htr.train()
         train_loss = 0.
 
         for step, batch in enumerate(train_loader):
 
             with accelerator.autocast():
                 with accelerator.accumulate(vae):
-                    image = batch['img'].to(weight_dtype)
-                    target = batch['bw_img'].to(weight_dtype)
+                    image = batch['images_bw'].to(weight_dtype)
+                    text_logits_s2s = batch['text_logits_s2s']  # TODO IMPLEMENT NOISY TEACHER
+                    tgt_mask = batch['tgt_key_mask']
 
-                    if accelerator.num_processes > 1:
-                        posterior = vae.module.encode(image).latent_dist
-                    else:
-                        posterior = vae.encode(image).latent_dist
+                    # x, tgt_logits, tgt_mask, tgt_key_padding_mask
+                    output = htr(image, text_logits_s2s, tgt_mask)
 
+                    htr_loss = smooth_ce_loss(output, text_logits_s2s)
                     z = posterior.sample()
 
                     pred = vae.module.decode(z).sample if accelerator.num_processes > 1 else vae.decode(z).sample

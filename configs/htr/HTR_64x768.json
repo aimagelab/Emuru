@@ -12,17 +12,9 @@
     "DownEncoderBlock2D",
     "DownEncoderBlock2D"
   ],
-  "force_upcast": true,
   "in_channels": 3,
   "latent_channels": 128,
   "d_model": 128,
   "layers_per_block": 2,
-  "norm_num_groups": 16,
-  "out_channels": 1,
-  "up_block_types": [
-    "UpDecoderBlock2D",
-    "UpDecoderBlock2D",
-    "UpDecoderBlock2D",
-    "UpDecoderBlock2D"
-  ]
+  "norm_num_groups": 16
 }
