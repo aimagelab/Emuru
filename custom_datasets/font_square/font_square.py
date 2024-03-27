@@ -106,6 +106,11 @@ class TextSampler:
         self.idx = 0
         self.load_words()
 
+        if self.charset is not None:
+            self.words = [word for word in self.words if all([c in self.charset for c in word])]
+        else:
+            self.charset = sorted(set(' '.join(self.words)))
+
     def load_words(self):
         self.words = nltk.corpus.abc.words()
         self.words += nltk.corpus.brown.words()
@@ -113,9 +118,6 @@ class TextSampler:
         self.words += nltk.corpus.inaugural.words()
         self.words += nltk.corpus.state_union.words()
         self.words += nltk.corpus.webtext.words()
-
-        if self.charset is not None:
-            self.words = [word for word in self.words if all([c in self.charset for c in word])]
 
     def __call__(self):
         if self.idx + self.count > len(self.words):
