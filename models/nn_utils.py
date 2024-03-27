@@ -55,7 +55,7 @@ class A2DPE(nn.Module):
         self.pe = pe
 
     def forward(self, x):
-        pe = torch.stack([self.pe] * x.shape[0])
+        pe = torch.stack([self.pe] * x.shape[0]).to(x.device)
         alpha, beta = self.alpha_fc(x), self.beta_fc(x)
         ph = alpha * pe[:, :x.shape[-2]]
         pw = beta * pe[:, :x.shape[-1]]

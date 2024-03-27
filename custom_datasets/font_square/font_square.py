@@ -89,7 +89,7 @@ class OnlineFontSquare(Dataset):
         self.transform = T.Compose([
             FT.RenderImage(self.fonts, calib_threshold=0.8, pad=20),
             FT.RandomRotation(3, fill=1),
-            # FT.RandomWarping(grid_shape=(5, 2), p=0.25),  # TODO UNCOMMENT
+            FT.RandomWarping(grid_shape=(5, 2), p=0.25),
             FT.GaussianBlur(kernel_size=3),
             FT.RandomBackground(backgrounds),
             FT.TailorTensor(pad=3),
