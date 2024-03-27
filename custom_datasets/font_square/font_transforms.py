@@ -45,9 +45,11 @@ class RenderImage(object):
         def render_fn(font_path):
             font_size = fonts_data[font_path.name] if font_path.name in fonts_data else 64
             render = Render(font_path, height, width, font_size)
-            fonts_data[font_path.name] if font_path.name not in fonts_data else render.calibrate(calib_text, calib_threshold, calib_h)
+            fonts_data[font_path.name] if font_path.name not in fonts_data else render.calibrate(calib_text,
+                                                                                                 calib_threshold,
+                                                                                                 calib_h)
             return render
-        
+
         self.renderers = [render_fn(path) for path in fonts_path]
         self.fonts_to_ids = {path.name: i for i, path in enumerate(fonts_path)}
         self.ids_to_fonts = {i: path.name for i, path in enumerate(fonts_path)}
@@ -55,14 +57,14 @@ class RenderImage(object):
         with open(fonts_data_path, 'w') as f:
             json.dump(fonts_data, f)
 
-
     def __call__(self, sample):
         font_id = sample['font_id'] if 'font_id' in sample else random.randrange(len(self.renderers))
         render_class = self.renderers[font_id]
         try:
             np_img = render_class.render(sample['text'], return_np=True, action='top_left', pad=self.pad)
         except OSError:
-            print(f'Error rendering "{sample["text"]}" with font {self.ids_to_fonts[font_id]}. Try to render only ascii letters.')
+            print(
+                f'Error rendering "{sample["text"]}" with font {self.ids_to_fonts[font_id]}. Try to render only ascii letters.')
             sample['text'] = ''.join([c for c in sample['text'] if c in set(string.ascii_lowercase + ' ')])
             np_img = render_class.render(sample['text'], return_np=True, action='top_left', pad=self.pad)
 
@@ -71,7 +73,7 @@ class RenderImage(object):
 
 
 class RandomWarping:
-    def __init__(self, std=0.05, grid_shape=(5,3), p=0.5):
+    def __init__(self, std=0.05, grid_shape=(5, 3), p=0.5):
         self.std = std
         self.grid_shape = grid_shape
         self.p = p
@@ -107,9 +109,11 @@ class RandomWarping:
         grid = torch.from_numpy(transformed_xy)
         grid = grid.reshape(1, h, w, 2)
         img = img.unsqueeze(0).type(grid.dtype)
-        sample['img'] = torch.nn.functional.grid_sample(img, grid, mode='nearest', padding_mode='border', align_corners=False).squeeze(0)
+        sample['img'] = torch.nn.functional.grid_sample(img, grid, mode='nearest', padding_mode='border',
+                                                        align_corners=False).squeeze(0)
         return sample
-    
+
+
 class GaussianBlur(T.GaussianBlur):
     def __call__(self, sample):
         sample['img'] = super().forward(sample['img'])
@@ -141,13 +145,34 @@ class MaxWidth:
         _, h, w = sample['img'].shape
         if w <= self.width:
             return sample
-        
+
         sample['img'] = sample['img'][:, :, :self.width]
         sample['bw_img'] = sample['bw_img'][:, :, :self.width]
         sample['bg_patch'] = sample['bg_patch'][:, :, :self.width]
 
         return sample
-    
+
+
+class ToWidth:
+    def __init__(self, width):
+        self.width = width
+
+    def __call__(self, sample):
+        _, h, w = sample['img'].shape
+        if w == self.width:
+            return sample
+        elif w < self.width:
+            pad_w = self.width - w
+            sample['img'] = F.pad(sample['img'], (0, 0, pad_w, 0), fill=1)
+            sample['bw_img'] = F.pad(sample['bw_img'], (0, 0, pad_w, 0), fill=1)
+            sample['bg_patch'] = F.pad(sample['bg_patch'], (0, 0, pad_w, 0), fill=1)
+        else:
+            sample['img'] = sample['img'][:, :, :self.width]
+            sample['bw_img'] = sample['bw_img'][:, :, :self.width]
+            sample['bg_patch'] = sample['bg_patch'][:, :, :self.width]
+
+        return sample
+
 
 class PadDivisible:
     def __init__(self, divisor):
@@ -167,11 +192,13 @@ class PadDivisible:
 
 class RandomBackground(object):
     start_time = time.time()
+
     def __init__(self, backgrounds):
         self.bgs = [F.to_tensor(Image.open(path).convert('RGB')) for path in backgrounds]
 
     def get_available_idx(self, img_h, img_w):
-        return [bg for bg in self.bgs if bg.shape[1] >= img_h and bg.shape[2] >= img_w] + [None]  # None is for white background
+        return [bg for bg in self.bgs if bg.shape[1] >= img_h and bg.shape[2] >= img_w] + [
+            None]  # None is for white background
 
     @staticmethod
     def random_patch(bg, img_h, img_w):
@@ -193,9 +220,9 @@ class RandomBackground(object):
         assert bg_patch.numel() > 0, f'Background patch is empty for image size {h}x{w}'
 
         if random.random() > 0.5:
-            bg_patch = bg_patch.flip(1)   # up-down
+            bg_patch = bg_patch.flip(1)  # up-down
         if random.random() > 0.5:
-            bg_patch = bg_patch.flip(2)   # left-right
+            bg_patch = bg_patch.flip(2)  # left-right
 
         sample['bg_patch'] = bg_patch
         return sample
@@ -312,7 +339,7 @@ class TimedCompose:
             sample = t(sample)
             self.times[t.__class__.__name__].append(time.time() - start)
         return sample
-    
+
     def print_times(self):
         max_width = max(len(k) for k in self.times.keys())
         self.times = {k: np.mean(v) for k, v in self.times.items()}

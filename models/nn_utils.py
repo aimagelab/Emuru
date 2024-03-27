@@ -76,6 +76,5 @@ class PEScaling(nn.Module):
 
     def forward(self, x):
         # global avg pooling
-        e = x.mean(-1).mean(-1).mean(-1).unsqueeze(-1)
-        e = x.mean(dim=(-1, -2, -3)).unsqueeze(-1)  # TODO TEST THIS
+        e = x.mean(dim=(-1, -2, -3)).unsqueeze(-1)  # Original Implementation x.mean(-1).mean(-1).mean(-1).unsqueeze(-1)
         return self.sigmoid(self.linear2(self.relu(self.linear1(e)))).unsqueeze(-1)

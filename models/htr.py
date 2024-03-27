@@ -28,6 +28,8 @@ from .nn_utils import PositionalEncoding1D, A2DPE
 # 0 | feature_extractor | Encoder       | 1.6 M
 # 1 | quant_conv        | Conv2d        | 16.5 K
 # 2 | htr               | HTR           | 3.9 M
+
+# Parameters: 5.437.695
 class HTR(ModelMixin, ConfigMixin):
 
     @register_to_config
@@ -42,8 +44,8 @@ class HTR(ModelMixin, ConfigMixin):
                  d_model: int = 128,
                  norm_num_groups: int = 16,
                  encoder_dropout: float = 0.1,
-                 tgt_pe=True,
-                 mem_pe=True,
+                 use_tgt_pe=True,
+                 use_mem_pe=True,
                  htr_dropout: float = 0.1,
                  num_encoder_layers: int = 2,
                  num_decoder_layers: int = 4,
@@ -69,15 +71,15 @@ class HTR(ModelMixin, ConfigMixin):
         # Letter classification
         self.text_embedding = nn.Embedding(alphabet_size, d_model)
         self.d_model = d_model
-        self.mem_pe = A2DPE(d_model=d_model, dropout=htr_dropout) if mem_pe else None
-        self.tgt_pe = PositionalEncoding1D(d_model=d_model, dropout=htr_dropout) if tgt_pe else None
+        self.mem_pe = A2DPE(d_model=d_model, dropout=htr_dropout) if use_mem_pe else None
+        self.tgt_pe = PositionalEncoding1D(d_model=d_model, dropout=htr_dropout) if use_tgt_pe else None
 
-        encoder_layer = nn.TransformerEncoderLayer(d_model=d_model,
-                                                   nhead=1)  # TODO in the original code it was manually implemented
+        # TODO all manually implemented in original code
+        encoder_layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=1, batch_first=True)
         self.transformer_encoder = nn.TransformerEncoder(
             encoder_layer, num_layers=num_encoder_layers, norm=nn.LayerNorm(d_model))
 
-        decoder_layer = nn.TransformerDecoderLayer(d_model=d_model, nhead=1)
+        decoder_layer = nn.TransformerDecoderLayer(d_model=d_model, nhead=1, batch_first=True)
         self.transformer_decoder = nn.TransformerDecoder(
             decoder_layer, num_layers=num_decoder_layers, norm=nn.LayerNorm(d_model))
 
@@ -85,22 +87,23 @@ class HTR(ModelMixin, ConfigMixin):
 
     def forward(self, x, tgt_logits, tgt_mask, tgt_key_padding_mask):
         # Feature extraction
-        x = self.feature_extractor(x)
-        x = self.quant_conv(x)
+        memory = self.feature_extractor(x)  # [16, 1, 64, 768] -> [16, 128, 8, 96]
+        memory = self.quant_conv(memory)
 
         # Letter classification
         if self.mem_pe is not None:
-            x = self.mem_pe(x)
+            memory = self.mem_pe(memory)
 
-        x = rearrange(x, "b c h w -> (h w) b c")
-        x = self.transformer_encoder(x)
+        memory = rearrange(memory, "b c h w -> b (h w) c")
+        memory = self.transformer_encoder(memory)
 
+        tgt = self.text_embedding(tgt_logits)
         if self.tgt_pe is not None:
-            x = self.tgt_pe(x)
+            tgt = self.tgt_pe(tgt)
 
-        tgt_logits = rearrange(tgt_logits, "b s d -> s b d")
-        x = self.transformer_decoder(tgt_logits, x, tgt_mask, tgt_key_padding_mask)
-        x = rearrange(x, "s b d -> b s d")
-        x = self.fc(x)
+        # tgt = rearrange(tgt, "b s d -> s b d")
+        tgt = self.transformer_decoder(tgt, memory, tgt_mask, tgt_key_padding_mask=tgt_key_padding_mask)
+        # tgt = rearrange(tgt, "s b d -> b s d")
+        tgt = self.fc(tgt)
 
-        return x
+        return tgt

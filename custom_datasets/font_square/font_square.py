@@ -48,7 +48,7 @@ def collate_fn(batch):
     text_logits_ctc = pad_sequence(text_logits_ctc, padding_value=padding_value, batch_first=True)
     text_logits_s2s = pad_sequence(text_logits_s2s, padding_value=padding_value, batch_first=True)
     tgt_key_mask = subsequent_mask(text_logits_s2s.shape[-1] - 1)
-    tgt_key_padding_mask = (text_logits_s2s == 1)
+    tgt_key_padding_mask = text_logits_s2s == padding_value
 
     return {
         'images': images,
@@ -89,7 +89,7 @@ class OnlineFontSquare(Dataset):
         self.transform = T.Compose([
             FT.RenderImage(self.fonts, calib_threshold=0.8, pad=20),
             FT.RandomRotation(3, fill=1),
-            FT.RandomWarping(grid_shape=(5, 2), p=0.25),
+            # FT.RandomWarping(grid_shape=(5, 2), p=0.25),  # TODO UNCOMMENT
             FT.GaussianBlur(kernel_size=3),
             FT.RandomBackground(backgrounds),
             FT.TailorTensor(pad=3),
@@ -99,7 +99,8 @@ class OnlineFontSquare(Dataset):
 
             FT.ColorJitter(brightness=0.15, contrast=0.15, saturation=0.15, hue=0),
             FT.ImgResize(64),
-            FT.MaxWidth(768),
+            # FT.MaxWidth(768),
+            FT.ToWidth(768),
             FT.PadDivisible(8),
             FT.Normalize((0.5,), (0.5,))
         ]) if transform is None else transform

@@ -13,8 +13,8 @@ class SmoothCrossEntropyLoss(torch.nn.Module):
         self.reduction = reduction
 
     def forward(self, pred, tgt):
-        pred = torch.flatten(pred)
-        tgt = torch.flatten(tgt)
+        pred = torch.flatten(pred, start_dim=0, end_dim=1)
+        tgt = torch.flatten(tgt, start_dim=0, end_dim=1)
 
         n_class = pred.size(1)
         one_hot = torch.zeros_like(pred)

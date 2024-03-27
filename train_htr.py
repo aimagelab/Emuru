@@ -34,6 +34,7 @@ from PIL import Image
 from utils import TrainState
 from custom_datasets import OnlineFontSquare, TextSampler, collate_fn
 from models.smooth_ce import SmoothCrossEntropyLoss
+import evaluate
 
 # from models.vae import VAEModel
 # from models.configuration_vae import VAEConfig
@@ -47,42 +48,40 @@ logger = get_logger(__name__)
 
 
 @torch.no_grad()
-def log_validation(args, eval_loader, vae, accelerator, weight_dtype, epoch):
-    vae_model = accelerator.unwrap_model(vae)
-    vae_model.eval()
+def log_validation(args, eval_loader, htr, accelerator, weight_dtype, loss_fn, cer_fn):
+    htr_model = accelerator.unwrap_model(htr)
+    htr_model.eval()
     eval_loss = 0.
-    images = []
+    cer_value = 0.
+    images_for_log = []
 
+    # TODO FONT SQUARE INITIALIZED WITH THE SEED PRODUCES THE SAME TEXT AND IMAGES
     for step, batch in enumerate(eval_loader):
-        image = batch['img'].to(weight_dtype)
-        target = batch['bw_img'].to(weight_dtype)
+        images = batch['images_bw'].to(weight_dtype)
+        text_logits_s2s = batch['text_logits_s2s']  # TODO IMPLEMENT NOISY TEACHER
+        tgt_mask = batch['tgt_key_mask']
+        tgt_key_padding_mask = batch['tgt_key_padding_mask']
 
-        if accelerator.num_processes > 1:
-            posterior = vae_model.module.encode(image).latent_dist
-        else:
-            posterior = vae_model.encode(image).latent_dist
+        output = htr(images, text_logits_s2s[:, :-1], tgt_mask, tgt_key_padding_mask[:, :-1])
+        loss = loss_fn(output, text_logits_s2s[:, 1:])
 
-        z = posterior.sample()
-
-        pred = vae_model.module.decode(z).sample if accelerator.num_processes > 1 else vae_model.decode(z).sample
-        kl_loss = posterior.kl().mean()
-        mse_loss = F.mse_loss(pred, target, reduction='mean')
-
-        loss = mse_loss + args.kl_scale * kl_loss
+        predicted_logits = torch.argmax(output, dim=2)
+        eos = torch.tensor(2)  # TODO CHANGE THIS AFTER ALPHABET REFACTORING
+        predicted_characters = eval_loader.dataset.alphabet.decode(predicted_logits, [eos])
+        correct_characters = eval_loader.dataset.alphabet.decode(text_logits_s2s[:, 1:], [eos])
+        cer_value += cer_fn.compute(predictions=predicted_characters, references=correct_characters)
         eval_loss += loss.item()
 
-        if step == 0:
-            images.append(torch.cat([image.cpu(), pred.repeat(1, 3, 1, 1).cpu()], dim=-1)[:8])
+        if step < 4:
+            images_for_log.append(wandb.Image(images[0], caption=predicted_characters[0]))
 
-    grid_nrows = 2
     accelerator.log({
         "eval_loss": eval_loss / len(eval_loader),
-        "Original (left), Reconstruction (right)":
-            [wandb.Image(torchvision.utils.make_grid(image, nrow=grid_nrows, normalize=True, value_range=(-1, 1))) for
-             _, image in enumerate(images)]
+        "cer_value": cer_value / len(eval_loader),
+        "images": images_for_log,
     })
 
-    del vae_model
+    del htr
     torch.cuda.empty_cache()
 
 
@@ -90,8 +89,8 @@ def train():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output_dir", type=str, default='results', help="output directory")
     parser.add_argument("--logging_dir", type=str, default='results', help="logging directory")
-    parser.add_argument("--train_batch_size", type=int, default=16, help="train batch size")
-    parser.add_argument("--eval_batch_size", type=int, default=32, help="eval batch size")
+    parser.add_argument("--train_batch_size", type=int, default=64, help="train batch size")
+    parser.add_argument("--eval_batch_size", type=int, default=128, help="eval batch size")
     parser.add_argument("--epochs", type=int, default=10000, help="number of epochs to train the model")
     parser.add_argument("--lr", type=float, default=1e-4, help="learning rate")
     parser.add_argument("--seed", type=int, default=24, help="random seed")
@@ -122,7 +121,7 @@ def train():
     args.kl_scale = 1e-6
     args.max_grad_norm = 1.0
     args.height = 64
-    args.num_samples_per_epoch = None
+    args.num_samples_per_epoch = 128
 
     args.run_name = args.resume_id if args.resume_id else uuid.uuid4().hex[:4]
     args.output_dir = Path(args.output_dir) / args.run_name
@@ -186,7 +185,7 @@ def train():
         num_training_steps=args.epochs * args.gradient_accumulation_steps,
     )
 
-    vae, optimizer, train_loader, eval_loader, lr_scheduler = accelerator.prepare(
+    htr, optimizer, train_loader, eval_loader, lr_scheduler = accelerator.prepare(
         [htr, optimizer, train_loader, eval_loader, lr_scheduler])
 
     weight_dtype = torch.float32
@@ -203,7 +202,7 @@ def train():
     num_update_steps_per_epoch = math.ceil(len(train_loader) / args.gradient_accumulation_steps)
     args.max_train_steps = args.epochs * num_update_steps_per_epoch
     total_batch_size = (args.train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps)
-    args.total_params = sum([p.numel() for p in vae.parameters()])
+    args.total_params = sum([p.numel() for p in htr.parameters()])
 
     logger.info("***** Running HTR training *****")
     logger.info(f"  Num examples = {len(train_dataset)}")
@@ -224,62 +223,66 @@ def train():
                         disable=not accelerator.is_local_main_process)
     progress_bar.set_description("Steps")
 
-    wandb.watch(vae, log="all", log_freq=1)
-
-    smooth_ce_loss = SmoothCrossEntropyLoss(tgt_pad_idx=train_dataset.alphabet.pad)
+    wandb.watch(htr, log="all", log_freq=1)
+    smooth_ce_loss = SmoothCrossEntropyLoss(tgt_pad_idx=0)
+    cer = evaluate.load('cer')
 
     for epoch in range(train_state.epoch, args.epochs):
         htr.train()
         train_loss = 0.
+        train_cer = 0.
 
         for step, batch in enumerate(train_loader):
 
             with accelerator.autocast():
-                with accelerator.accumulate(vae):
-                    image = batch['images_bw'].to(weight_dtype)
+                with accelerator.accumulate(htr):
+                    images = batch['images_bw'].to(weight_dtype)
                     text_logits_s2s = batch['text_logits_s2s']  # TODO IMPLEMENT NOISY TEACHER
                     tgt_mask = batch['tgt_key_mask']
+                    tgt_key_padding_mask = batch['tgt_key_padding_mask']
 
                     # x, tgt_logits, tgt_mask, tgt_key_padding_mask
-                    output = htr(image, text_logits_s2s, tgt_mask)
+                    output = htr(images, text_logits_s2s[:, :-1], tgt_mask, tgt_key_padding_mask[:, :-1])
 
-                    htr_loss = smooth_ce_loss(output, text_logits_s2s)
-                    z = posterior.sample()
+                    loss = smooth_ce_loss(output, text_logits_s2s[:, 1:])
 
-                    pred = vae.module.decode(z).sample if accelerator.num_processes > 1 else vae.decode(z).sample
-                    kl_loss = posterior.kl().mean()
-                    mse_loss = F.mse_loss(pred, target, reduction='mean')
-
-                    loss = mse_loss + args.kl_scale * kl_loss
+                    predicted_logits = torch.argmax(output, dim=2)
+                    eos = torch.tensor(2)  # TODO CHANGE THIS AFTER ALPHABET REFACTORING
+                    predicted_characters = train_dataset.alphabet.decode(predicted_logits, [eos])
+                    correct_characters = train_dataset.alphabet.decode(text_logits_s2s[:, 1:], [eos])
+                    cer_value = cer.compute(predictions=predicted_characters, references=correct_characters)
 
                     if not torch.isfinite(loss):
                         logger.info("\nWARNING: non-finite loss")
                         optimizer.zero_grad()
                         continue
 
-                    avg_loss = accelerator.gather(loss.repeat(args.train_batch_size)).mean()
+                    avg_loss = accelerator.gather(loss).mean()
+                    avg_cer = accelerator.gather(torch.tensor(cer_value)).mean()
                     train_loss += avg_loss.item() / args.gradient_accumulation_steps
+                    train_cer += avg_cer.item() / args.gradient_accumulation_steps
                     accelerator.backward(loss)
 
                     if accelerator.sync_gradients:
-                        accelerator.clip_grad_norm_(vae.parameters(), args.max_grad_norm)
+                        accelerator.clip_grad_norm_(htr.parameters(), args.max_grad_norm)
                     optimizer.step()
                     lr_scheduler.step()
                     optimizer.zero_grad()
 
+                logs = {}
                 if accelerator.sync_gradients:
                     progress_bar.update(1)
                     train_state.global_step += 1
-                    accelerator.log({"train_loss": train_loss})
+                    logs["global_step"] = train_state.global_step
+                    logs['train_loss'] = train_loss
+                    logs['train_cer'] = train_cer
                     train_loss = 0.0
+                    train_cer = 0.0
 
-                logs = {
-                    "step_loss": loss.detach().item(),
-                    "lr": lr_scheduler.get_last_lr()[0],
-                    "mse": mse_loss.detach().item(),
-                    "kl": kl_loss.detach().item(),
-                    'epoch': epoch,
-                }
+                logs["lr"] = lr_scheduler.get_last_lr()[0]
+                logs["smooth_ce"] = loss.detach().item()
+                logs["cer_value"] = cer_value
+                logs['epoch'] = epoch
 
                 accelerator.log(logs)
                 progress_bar.set_postfix(**logs)
@@ -289,14 +292,14 @@ def train():
             if epoch % args.eval_epochs == 0:
                 accelerator.save_state()
                 with torch.no_grad():
-                    log_validation(args, eval_loader, vae, accelerator, weight_dtype, epoch)
+                    log_validation(args, eval_loader, htr, accelerator, weight_dtype, loss_fn=smooth_ce_loss, cer_fn=cer)
 
             if epoch % args.model_save_interval == 0:
-                vae = accelerator.unwrap_model(vae)
+                vae = accelerator.unwrap_model(htr)
                 vae.save_pretrained(args.output_dir / f"model_{epoch:04d}")
 
     if accelerator.is_main_process:
-        vae = accelerator.unwrap_model(vae)
+        vae = accelerator.unwrap_model(htr)
         vae.save_pretrained(args.output_dir)
 
     accelerator.end_training()

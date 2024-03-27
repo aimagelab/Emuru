@@ -11,9 +11,6 @@ from .constants import (
 class Alphabet:
     def __init__(self, charset):
         self.extra = [PAD, START_OF_SEQUENCE, END_OF_SEQUENCE]
-        self.sos = START_OF_SEQUENCE
-        self.eos = END_OF_SEQUENCE
-        self.pad = PAD
 
         charset_types = [self.extra, charset]
 
@@ -37,7 +34,7 @@ class Alphabet:
     def _decode(self, x_in):
         out = []
         for i in x_in:
-            out.append(self.idx2char[i])
+            out.append(self.idx2char[int(i)])
         return "".join(out)
 
     def decode(self, x_in, stopping_logits: list):
