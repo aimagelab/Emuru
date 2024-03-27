@@ -1,0 +1,1 @@
+from .lightning_vae.thirdparty.VQVAEGAN.autoencoder import AutoencoderKL

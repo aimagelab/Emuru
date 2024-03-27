@@ -62,8 +62,8 @@ class RenderImage(object):
         try:
             np_img = render_class.render(sample['text'], return_np=True, action='top_left', pad=self.pad)
         except OSError:
-            print(f'Error rendering "{sample["text"]}" with font {self.ids_to_fonts[font_id]}. Try to render only ascii letters.')
-            sample['text'] = ''.join([c for c in sample['text'] if c in set(string.ascii_lowercase + ' ')])
+            # print(f'Error rendering "{sample["text"]}" with font {self.ids_to_fonts[font_id]}. Trying to render only ascii letters.')
+            sample['text'] = ''.join([c for c in sample['text'].lower() if c in set(string.ascii_lowercase + ' ')])
             np_img = render_class.render(sample['text'], return_np=True, action='top_left', pad=self.pad)
 
         sample['img'] = torch.from_numpy(np_img).unsqueeze(0).float()

@@ -51,7 +51,7 @@ class OnlineFontSquare(Dataset):
             FT.ColorJitter(brightness=0.15, contrast=0.15, saturation=0.15, hue=0),
             FT.ImgResize(64),
             FT.MaxWidth(768),
-            FT.PadDivisible(8),
+            FT.PadDivisible(32),
             FT.Normalize((0.5,), (0.5,))
         ]) if transform is None else transform
 
@@ -91,7 +91,7 @@ class HFDataCollector:
     def __call__(self, batch):
         txts = [sample['text'] for sample in batch]
         res = self.tokenizer(txts, padding=True, return_tensors='pt', return_attention_mask=True, return_length=True)
-        res['img'] = pad_images([sample['img'] for sample in batch])
+        res['img'] = pad_images([sample['bw_img'] for sample in batch])
         return res
 
 
