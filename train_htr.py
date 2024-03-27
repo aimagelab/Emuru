@@ -121,7 +121,7 @@ def train():
     args.kl_scale = 1e-6
     args.max_grad_norm = 1.0
     args.height = 64
-    args.num_samples_per_epoch = 128
+    args.num_samples_per_epoch = None
 
     args.run_name = args.resume_id if args.resume_id else uuid.uuid4().hex[:4]
     args.output_dir = Path(args.output_dir) / args.run_name
