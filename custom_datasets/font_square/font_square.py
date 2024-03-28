@@ -54,6 +54,7 @@ def collate_fn(batch):
         'images': images,
         'images_bw': images_bw,
         'texts': texts,
+        'unpadded_texts_len': torch.LongTensor(texts_len),
         'names': names,
         'text_logits_ctc': text_logits_ctc,
         'text_logits_s2s': text_logits_s2s,

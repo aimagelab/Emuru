@@ -10,7 +10,6 @@ import uuid
 import json
 
 import torch
-from torch.optim import AdamW
 from torch.utils.data import DataLoader
 import numpy as np
 import torch.nn.functional as F
@@ -25,8 +24,8 @@ from accelerate.utils import ProjectConfiguration, set_seed
 
 import diffusers
 from models.htr import HTR
-from diffusers.optimization import get_scheduler
-from diffusers.training_utils import EMAModel
+from models.teacher_forcing import NoisyTeacherForcing
+from transformers.optimization import get_scheduler
 from diffusers.utils import is_wandb_available
 
 from PIL import Image
@@ -35,9 +34,6 @@ from utils import TrainState
 from custom_datasets import OnlineFontSquare, TextSampler, collate_fn
 from models.smooth_ce import SmoothCrossEntropyLoss
 import evaluate
-
-# from models.vae import VAEModel
-# from models.configuration_vae import VAEConfig
 
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
@@ -48,41 +44,52 @@ logger = get_logger(__name__)
 
 
 @torch.no_grad()
-def log_validation(eval_loader, htr, accelerator, weight_dtype, loss_fn, cer_fn):
+def validation(eval_loader, htr, accelerator, weight_dtype, loss_fn, cer_fn, noisy_teacher):
     htr_model = accelerator.unwrap_model(htr)
     htr_model.eval()
     eval_loss = 0.
-    cer_value = 0.
     images_for_log = []
 
     # TODO FONT SQUARE INITIALIZED WITH THE SEED PRODUCES THE SAME TEXT AND IMAGES
     for step, batch in enumerate(eval_loader):
         images = batch['images_bw'].to(weight_dtype)
-        text_logits_s2s = batch['text_logits_s2s']  # TODO IMPLEMENT NOISY TEACHER
+        text_logits_s2s = batch['text_logits_s2s']
+        text_logits_s2s_noisy = noisy_teacher(text_logits_s2s, batch['unpadded_texts_len'])
         tgt_mask = batch['tgt_key_mask']
         tgt_key_padding_mask = batch['tgt_key_padding_mask']
 
-        output = htr(images, text_logits_s2s[:, :-1], tgt_mask, tgt_key_padding_mask[:, :-1])
+        output = htr(images, text_logits_s2s_noisy[:, :-1], tgt_mask, tgt_key_padding_mask[:, :-1])
         loss = loss_fn(output, text_logits_s2s[:, 1:])
 
         predicted_logits = torch.argmax(output, dim=2)
         eos = torch.tensor(2)  # TODO CHANGE THIS AFTER ALPHABET REFACTORING
         predicted_characters = eval_loader.dataset.alphabet.decode(predicted_logits, [eos])
         correct_characters = eval_loader.dataset.alphabet.decode(text_logits_s2s[:, 1:], [eos])
-        cer_value += cer_fn.compute(predictions=predicted_characters, references=correct_characters)
+
+        if accelerator.use_distributed:
+            accelerator.gather_for_metrics((predicted_characters, correct_characters))
+            accelerator.gather(loss).mean()
+
+        cer_fn.add_batch(predictions=predicted_characters, references=correct_characters)
+
+        # cer_value += cer_fn.compute(predictions=predicted_characters, references=correct_characters)
         eval_loss += loss.item()
 
         if step < 4:
             images_for_log.append(wandb.Image(images[0], caption=predicted_characters[0]))
 
-    accelerator.log({
-        "eval_loss": eval_loss / len(eval_loader),
-        "cer_value": cer_value / len(eval_loader),
-        "images": images_for_log,
-    })
+    cer_value = cer_fn.compute()
+
+    if accelerator.is_main_process:
+        accelerator.log({
+            "eval/loss": eval_loss / len(eval_loader),
+            "eval/cer": cer_value / len(eval_loader),
+            "eval/images": images_for_log,
+        })
 
     del htr
     torch.cuda.empty_cache()
+    return cer_value
 
 
 def train():
@@ -91,32 +98,29 @@ def train():
     parser.add_argument("--logging_dir", type=str, default='results', help="logging directory")
     parser.add_argument("--train_batch_size", type=int, default=128, help="train batch size")
     parser.add_argument("--eval_batch_size", type=int, default=128, help="eval batch size")
-    parser.add_argument("--epochs", type=int, default=10000, help="number of epochs to train the model")
+    parser.add_argument("--epochs", type=int, default=10000, help="number of train epochs")
     parser.add_argument("--lr", type=float, default=1e-4, help="learning rate")
-    parser.add_argument("--seed", type=int, default=24, help="random seed")
+    parser.add_argument("--seed", type=int, default=64, help="random seed")
     parser.add_argument('--model_save_interval', type=int, default=5, help="model save interval")
     parser.add_argument("--eval_epochs", type=int, default=5, help="eval interval")
     parser.add_argument("--resume_id", type=str, default=None, help="resume from checkpoint")
     parser.add_argument("--htr_config", type=str, default='configs/htr/HTR_64x768.json', help='config path')
 
-    parser.add_argument("--lr_scheduler", type=str, default="constant",
-                        choices=["linear", "cosine", "cosine_with_restarts", "polynomial",
-                                 "constant", "constant_with_warmup"])
+    parser.add_argument("--lr_scheduler", type=str, default="reduce_lr_on_plateau")
+    parser.add_argument("--lr_scheduler_patience", type=int, default=10)
 
     args = parser.parse_args()
 
     args.mixed_precision = 'no'
-    args.use_8bit_adam = False  # todo implement it
     args.gradient_accumulation_steps = 1
     args.checkpoints_total_limit = 5
     args.report_to = "wandb"
     args.wandb_project_name = "emuru_htr"
     args.use_ema = False  # TODO IMPLEMENT IT
-    args.scale_lr = False
     args.adam_beta1 = 0.9
     args.adam_beta2 = 0.999
     args.adam_epsilon = 1e-8
-    args.adam_weight_decay = 1e-2
+    args.adam_weight_decay = 0
     args.lr_warmup_steps = 32
     args.kl_scale = 1e-6
     args.max_grad_norm = 1.0
@@ -139,6 +143,7 @@ def train():
         mixed_precision=args.mixed_precision,
         log_with=args.report_to,
         project_config=accelerator_project_config,
+        cpu=False,
     )
 
     logger.info(accelerator.state, main_process_only=False)
@@ -158,10 +163,7 @@ def train():
     htr = HTR.from_config(config_dict)
     htr.requires_grad_(True)
 
-    if args.scale_lr:
-        args.lr = args.lr * args.gradient_accumulation_steps * args.train_batch_size * accelerator.num_processes
-
-    optimizer = torch.optim.Adam(
+    optimizer = torch.optim.RAdam(
         htr.parameters(),
         lr=args.lr,
         betas=(args.adam_beta1, args.adam_beta2),
@@ -181,8 +183,7 @@ def train():
     lr_scheduler = get_scheduler(
         args.lr_scheduler,
         optimizer=optimizer,
-        num_warmup_steps=args.lr_warmup_steps * args.gradient_accumulation_steps,
-        num_training_steps=args.epochs * args.gradient_accumulation_steps,
+        scheduler_specific_kwargs={"patience": args.lr_scheduler_patience}
     )
 
     htr, optimizer, train_loader, eval_loader, lr_scheduler = accelerator.prepare(
@@ -199,13 +200,13 @@ def train():
         tracker_config = dict(vars(args))
         accelerator.init_trackers(args.wandb_project_name, tracker_config, wandb_args)
 
-    num_update_steps_per_epoch = math.ceil(len(train_loader) / args.gradient_accumulation_steps)
-    args.max_train_steps = args.epochs * num_update_steps_per_epoch
+    num_steps_per_epoch = math.ceil(len(train_loader) / args.gradient_accumulation_steps)
+    args.max_train_steps = args.epochs * num_steps_per_epoch
     total_batch_size = (args.train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps)
     args.total_params = sum([p.numel() for p in htr.parameters()])
 
     logger.info("***** Running HTR training *****")
-    logger.info(f"  Num examples = {len(train_dataset)}")
+    logger.info(f"  Num train samples = {len(train_dataset)}")
     logger.info(f"  Num eval samples = {len(eval_dataset)}")
     logger.info(f"  Num Epochs = {args.epochs}")
     logger.info(f"  Instantaneous batch size per device = {args.train_batch_size}")
@@ -219,29 +220,31 @@ def train():
         accelerator.load_state()
         accelerator.project_configuration.iteration = train_state.epoch
 
-    progress_bar = tqdm(range(train_state.global_step, args.max_train_steps),
-                        disable=not accelerator.is_local_main_process)  # TODO SHOULD HAVE ONE PROGRESS BAR FOR EACH EPOCH
-    progress_bar.set_description("Steps") # TODO IN WANDB I SHOULD HAVE SECTIONS
-
     wandb.watch(htr, log="all", log_freq=1)
     smooth_ce_loss = SmoothCrossEntropyLoss(tgt_pad_idx=0)
     cer = evaluate.load('cer')
+    noisy_teacher = NoisyTeacherForcing(len(train_dataset.alphabet), 0.1)
 
     for epoch in range(train_state.epoch, args.epochs):
+
         htr.train()
         train_loss = 0.
         train_cer = 0.
+
+        progress_bar = tqdm(range(train_state.global_step, num_steps_per_epoch),
+                            disable=not accelerator.is_local_main_process)
+        progress_bar.set_description("Epoch Steps")
 
         for step, batch in enumerate(train_loader):
 
             with accelerator.accumulate(htr):
                 images = batch['images_bw'].to(weight_dtype)
-                text_logits_s2s = batch['text_logits_s2s']  # TODO IMPLEMENT NOISY TEACHER
+                text_logits_s2s = batch['text_logits_s2s']
+                text_logits_s2s_noisy = noisy_teacher(text_logits_s2s, batch['unpadded_texts_len'])
                 tgt_mask = batch['tgt_key_mask']
                 tgt_key_padding_mask = batch['tgt_key_padding_mask']
 
-                # x, tgt_logits, tgt_mask, tgt_key_padding_mask  # TODO CANCEL THIS
-                output = htr(images, text_logits_s2s[:, :-1], tgt_mask, tgt_key_padding_mask[:, :-1])
+                output = htr(images, text_logits_s2s_noisy[:, :-1], tgt_mask, tgt_key_padding_mask[:, :-1])
 
                 loss = smooth_ce_loss(output, text_logits_s2s[:, 1:])
 
@@ -262,10 +265,9 @@ def train():
                 train_cer += avg_cer.item() / args.gradient_accumulation_steps
                 accelerator.backward(loss)
 
-                if accelerator.sync_gradients:
-                    accelerator.clip_grad_norm_(htr.parameters(), args.max_grad_norm)
+                # if accelerator.sync_gradients:
+                #     accelerator.clip_grad_norm_(htr.parameters(), args.max_grad_norm)
                 optimizer.step()
-                lr_scheduler.step()
                 optimizer.zero_grad()
 
             logs = {}
@@ -273,33 +275,38 @@ def train():
                 progress_bar.update(1)
                 train_state.global_step += 1
                 logs["global_step"] = train_state.global_step
-                logs['train_loss'] = train_loss
-                logs['train_cer'] = train_cer
+                logs['train/loss'] = train_loss
+                logs['train/cer'] = train_cer
                 train_loss = 0.0
                 train_cer = 0.0
 
-            logs["lr"] = lr_scheduler.get_last_lr()[0]
-            logs["smooth_ce"] = loss.detach().item()
-            logs["cer_value"] = cer_value
+            logs["lr"] = optimizer.param_groups[0]['lr']
+            logs["train/smooth_ce"] = loss.detach().item()
+            logs["train/cer"] = cer_value
             logs['epoch'] = epoch
 
             accelerator.log(logs)
             progress_bar.set_postfix(**logs)
 
+        progress_bar.close()
         train_state.epoch += 1
-        if accelerator.is_main_process:
-            if epoch % args.eval_epochs == 0:
-                accelerator.save_state()
-                with torch.no_grad():
-                    log_validation(eval_loader, htr, accelerator, weight_dtype, loss_fn=smooth_ce_loss, cer_fn=cer)
 
-            if epoch % args.model_save_interval == 0:
-                vae = accelerator.unwrap_model(htr)
-                vae.save_pretrained(args.output_dir / f"model_{epoch:04d}")
+        if epoch % args.eval_epochs == 0:
+            with torch.no_grad():
+                val_cer = validation(eval_loader, htr, accelerator, weight_dtype, smooth_ce_loss, cer, noisy_teacher)
+                lr_scheduler.step(cer_value)
+
+            if accelerator.is_main_process:
+                logger.info(f"Epoch {epoch} - CER: {val_cer}")
+                accelerator.save_state()
+
+        if accelerator.is_main_process and epoch % args.model_save_interval == 0:
+            htr = accelerator.unwrap_model(htr)
+            htr.save_pretrained(args.output_dir / f"model_{epoch:04d}")
 
     if accelerator.is_main_process:
-        vae = accelerator.unwrap_model(htr)
-        vae.save_pretrained(args.output_dir)
+        htr = accelerator.unwrap_model(htr)
+        htr.save_pretrained(args.output_dir)
 
     accelerator.end_training()
     logger.info("***** Training finished *****")

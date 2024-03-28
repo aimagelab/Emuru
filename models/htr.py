@@ -75,11 +75,11 @@ class HTR(ModelMixin, ConfigMixin):
         self.tgt_pe = PositionalEncoding1D(d_model=d_model, dropout=htr_dropout) if use_tgt_pe else None
 
         # TODO all manually implemented in original code
-        encoder_layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=1, batch_first=True)
+        encoder_layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=1)
         self.transformer_encoder = nn.TransformerEncoder(
-            encoder_layer, num_layers=num_encoder_layers, norm=nn.LayerNorm(d_model))
+            encoder_layer, num_layers=num_encoder_layers, norm=nn.LayerNorm(d_model), enable_nested_tensor=False)
 
-        decoder_layer = nn.TransformerDecoderLayer(d_model=d_model, nhead=1, batch_first=True)
+        decoder_layer = nn.TransformerDecoderLayer(d_model=d_model, nhead=1)
         self.transformer_decoder = nn.TransformerDecoder(
             decoder_layer, num_layers=num_decoder_layers, norm=nn.LayerNorm(d_model))
 
@@ -94,16 +94,16 @@ class HTR(ModelMixin, ConfigMixin):
         if self.mem_pe is not None:
             memory = self.mem_pe(memory)
 
-        memory = rearrange(memory, "b c h w -> b (h w) c")
+        memory = rearrange(memory, "b c h w -> (h w) b c")
         memory = self.transformer_encoder(memory)
 
         tgt = self.text_embedding(tgt_logits)
         if self.tgt_pe is not None:
             tgt = self.tgt_pe(tgt)
 
-        # tgt = rearrange(tgt, "b s d -> s b d")
+        tgt = rearrange(tgt, "b s d -> s b d")
         tgt = self.transformer_decoder(tgt, memory, tgt_mask, tgt_key_padding_mask=tgt_key_padding_mask)
-        # tgt = rearrange(tgt, "s b d -> b s d")
+        tgt = rearrange(tgt, "s b d -> b s d")
         tgt = self.fc(tgt)
 
         return tgt

@@ -25,6 +25,9 @@ class Alphabet:
                 current_id += 1
                 self.labels.append(char)
 
+    def __len__(self):
+        return len(self.labels)
+
     def encode(self, x_in):
         out = []
         for i in x_in:
