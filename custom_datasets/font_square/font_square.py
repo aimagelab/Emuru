@@ -145,15 +145,14 @@ class HFDataCollector:
 
 
 class TextSampler:
-    def __init__(self, min_len, max_len, count, exponent=1, charset=None):
+    def __init__(self, min_len, max_len, count, charset=None):
         self.min_len = min_len
         self.max_len = max_len
         self.charset = charset
-        self.exponent = exponent
         self.count = count
 
-        self.idx = 0
         self.load_words()
+        self.num_words = len(self.words)
 
     def load_words(self):
         self.words = nltk.corpus.abc.words()
@@ -167,15 +166,10 @@ class TextSampler:
             self.words = [word for word in self.words if all([c in self.charset for c in word])]
 
     def __call__(self):
-        if self.idx + self.count > len(self.words):
-            res = self.words[self.idx:]
-            res += self.words[:self.count - len(res)]
-            self.idx = self.count - len(res)
-        else:
-            res = self.words[self.idx:self.idx + self.count]
-            self.idx += self.count
-
+        words_indexes = torch.randint(0, self.num_words, (self.count,))  # TODO ALSO THE NUMBER OF WORDS SHOULD CHANGE
+        res = [self.words[i] for i in words_indexes]
         txt = ' '.join(res)
+
         if self.min_len is not None and len(txt) < self.min_len:
             txt = txt + (' ' * (self.min_len - len(txt)))
         if self.max_len is not None and len(txt) > self.max_len:
