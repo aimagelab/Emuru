@@ -1,45 +1,30 @@
 import argparse
 import logging
-import einops
 import wandb
 from pathlib import Path
 import math
-import os
 from tqdm.auto import tqdm
 import uuid
 import json
 
 import torch
 from torch.utils.data import DataLoader
-import numpy as np
-import torch.nn.functional as F
 import torch.utils.checkpoint
-import torchvision
+from diffusers.training_utils import EMAModel
 
-from transformers import Trainer
-import accelerate
 from accelerate import Accelerator
 from accelerate.logging import get_logger
 from accelerate.utils import ProjectConfiguration, set_seed
 
-import diffusers
-from models.htr import HTR
-from models.teacher_forcing import NoisyTeacherForcing
 from transformers.optimization import get_scheduler
-from diffusers.utils import is_wandb_available
-
-from PIL import Image
+import evaluate
 
 from utils import TrainState
 from custom_datasets import OnlineFontSquare, TextSampler, collate_fn
 from models.smooth_ce import SmoothCrossEntropyLoss
-import evaluate
-
-from custom_datasets.constants import (
-    START_OF_SEQUENCE,
-    END_OF_SEQUENCE,
-    PAD,
-)
+from custom_datasets.constants import END_OF_SEQUENCE
+from models.htr import HTR
+from models.teacher_forcing import NoisyTeacherForcing
 
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
@@ -50,7 +35,7 @@ logger = get_logger(__name__)
 
 
 @torch.no_grad()
-def validation(eval_loader, htr, accelerator, weight_dtype, loss_fn, cer_fn, noisy_teacher):
+def validation(eval_loader, htr, accelerator, weight_dtype, loss_fn, cer_fn, wandb_prefix="eval"):
     htr_model = accelerator.unwrap_model(htr)
     htr_model.eval()
     eval_loss = 0.
@@ -59,11 +44,10 @@ def validation(eval_loader, htr, accelerator, weight_dtype, loss_fn, cer_fn, noi
     for step, batch in enumerate(eval_loader):
         images = batch['images_bw'].to(weight_dtype)
         text_logits_s2s = batch['text_logits_s2s']
-        text_logits_s2s_noisy = noisy_teacher(text_logits_s2s, batch['unpadded_texts_len'])
         tgt_mask = batch['tgt_key_mask']
         tgt_key_padding_mask = batch['tgt_key_padding_mask']
 
-        output = htr(images, text_logits_s2s_noisy[:, :-1], tgt_mask, tgt_key_padding_mask[:, :-1])
+        output = htr(images, text_logits_s2s[:, :-1], tgt_mask, tgt_key_padding_mask[:, :-1])
         loss = loss_fn(output, text_logits_s2s[:, 1:])
 
         predicted_logits = torch.argmax(output, dim=2)
@@ -75,8 +59,6 @@ def validation(eval_loader, htr, accelerator, weight_dtype, loss_fn, cer_fn, noi
             accelerator.gather(loss).mean()
 
         cer_fn.add_batch(predictions=predicted_characters, references=correct_characters)
-
-        # cer_value += cer_fn.compute(predictions=predicted_characters, references=correct_characters)
         eval_loss += loss.item()
 
         if step < 4:
@@ -86,9 +68,9 @@ def validation(eval_loader, htr, accelerator, weight_dtype, loss_fn, cer_fn, noi
 
     if accelerator.is_main_process:
         accelerator.log({
-            "eval/loss": eval_loss / len(eval_loader),
-            "eval/cer": cer_value / len(eval_loader),
-            "eval/images": images_for_log,
+            f"{wandb_prefix}/loss": eval_loss / len(eval_loader),
+            f"{wandb_prefix}/cer": cer_value / len(eval_loader),
+            f"{wandb_prefix}/images": images_for_log,
         })
 
     del htr
@@ -120,7 +102,7 @@ def train():
     args.checkpoints_total_limit = 5
     args.report_to = "wandb"
     args.wandb_project_name = "emuru_htr"
-    args.use_ema = False  # TODO IMPLEMENT IT
+    args.use_ema = True
     args.adam_beta1 = 0.9
     args.adam_beta2 = 0.999
     args.adam_epsilon = 1e-8
@@ -162,6 +144,11 @@ def train():
 
     htr = HTR.from_config(config_dict)
     htr.requires_grad_(True)
+
+    if args.use_ema:
+        ema_htr = HTR.from_config(config_dict)
+        ema_htr = EMAModel(ema_htr.parameters(), model_cls=HTR, model_config=htr.config)
+        accelerator.register_for_checkpointing(ema_htr)
 
     optimizer = torch.optim.AdamW(
         htr.parameters(),
@@ -264,14 +251,15 @@ def train():
                 train_cer += avg_cer.item() / args.gradient_accumulation_steps
                 accelerator.backward(loss)
 
-                # if accelerator.sync_gradients:
-                #     accelerator.clip_grad_norm_(htr.parameters(), args.max_grad_norm)
                 optimizer.step()
                 optimizer.zero_grad()
 
             logs = {}
             if accelerator.sync_gradients:
                 progress_bar.update(1)
+                if args.use_ema:
+                    ema_htr.to(htr.device)
+                    ema_htr.step(htr.parameters())
                 train_state.global_step += 1
                 logs["global_step"] = train_state.global_step
                 logs['train/loss'] = train_loss
@@ -292,20 +280,29 @@ def train():
 
         if epoch % args.eval_epochs == 0:
             with torch.no_grad():
-                val_cer = validation(eval_loader, htr, accelerator, weight_dtype, smooth_ce_loss, cer, noisy_teacher)
+                eval_cer = validation(eval_loader, htr, accelerator, weight_dtype, smooth_ce_loss, cer)
                 lr_scheduler.step(cer_value)
 
+                if args.use_ema:
+                    ema_htr.store(htr.parameters())
+                    ema_htr.copy_to(htr.parameters())
+                    _ = validation(eval_loader, htr, accelerator, weight_dtype, smooth_ce_loss, cer, 'ema')
+                    ema_htr.restore(htr)
+
             if accelerator.is_main_process:
-                logger.info(f"Epoch {epoch} - CER: {val_cer}")
+                logger.info(f"Epoch {epoch} - CER: {eval_cer}")
                 accelerator.save_state()
 
         if accelerator.is_main_process and epoch % args.model_save_interval == 0:
-            htr = accelerator.unwrap_model(htr)
             htr.save_pretrained(args.output_dir / f"model_{epoch:04d}")
 
     if accelerator.is_main_process:
         htr = accelerator.unwrap_model(htr)
         htr.save_pretrained(args.output_dir)
+
+        if args.use_ema:
+            ema_htr.copy_to(htr.parameters())
+            htr.save_pretrained(args.output_dir / f"ema")
 
     accelerator.end_training()
     logger.info("***** Training finished *****")

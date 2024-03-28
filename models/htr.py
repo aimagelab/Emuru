@@ -102,7 +102,7 @@ class HTR(ModelMixin, ConfigMixin):
             tgt = self.tgt_pe(tgt)
 
         tgt = rearrange(tgt, "b s d -> s b d")
-        tgt = self.transformer_decoder(tgt, memory, tgt_mask, tgt_key_padding_mask=tgt_key_padding_mask)
+        tgt = self.transformer_decoder(tgt, memory, tgt_mask, tgt_key_padding_mask=tgt_key_padding_mask.float())
         tgt = rearrange(tgt, "s b d -> b s d")
         tgt = self.fc(tgt)
 
