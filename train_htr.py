@@ -91,23 +91,24 @@ def train():
     parser.add_argument("--eval_epochs", type=int, default=5, help="eval interval")
     parser.add_argument("--resume_id", type=str, default=None, help="resume from checkpoint")
     parser.add_argument("--htr_config", type=str, default='configs/htr/HTR_64x768.json', help='config path')
+    parser.add_argument("--report_to", type=str, default="wandb")
+    parser.add_argument("--wandb_project_name", type=str, default="emuru_htr", help="wandb project name")
 
+    parser.add_argument("--num_samples_per_epoch", type=int, default=None)
     parser.add_argument("--lr_scheduler", type=str, default="reduce_lr_on_plateau")
     parser.add_argument("--lr_scheduler_patience", type=int, default=10)
+    parser.add_argument("--use_ema", type=str, default="True")
+    parser.add_argument("--gradient_accumulation_steps", type=int, default=1)
+    parser.add_argument("--mixed_precision", type=str, default="no")
+    parser.add_argument("--checkpoints_total_limit", type=int, default=5)
 
     args = parser.parse_args()
 
-    args.mixed_precision = 'no'
-    args.gradient_accumulation_steps = 1
-    args.checkpoints_total_limit = 5
-    args.report_to = "wandb"
-    args.wandb_project_name = "emuru_htr"
-    args.use_ema = True
+    args.use_ema = args.use_ema == "True"
     args.adam_beta1 = 0.9
     args.adam_beta2 = 0.999
     args.adam_epsilon = 1e-8
     args.adam_weight_decay = 0
-    args.num_samples_per_epoch = None
 
     args.run_name = args.resume_id if args.resume_id else uuid.uuid4().hex[:4]
     args.output_dir = Path(args.output_dir) / args.run_name
