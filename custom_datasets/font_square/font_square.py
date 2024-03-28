@@ -43,13 +43,12 @@ def collate_fn(batch):
         texts_len.append(len(item['text']))
         writers.append(item['writer'])
 
-    padding_value = 0  # TODO CHANGE IT AFTER REFACTORING
-    images = pad_images(images, padding_value=padding_value)
-    images_bw = pad_images(images_bw, padding_value=padding_value)
-    text_logits_ctc = pad_sequence(text_logits_ctc, padding_value=padding_value, batch_first=True)
-    text_logits_s2s = pad_sequence(text_logits_s2s, padding_value=padding_value, batch_first=True)
+    images = pad_images(images, padding_value=PAD)
+    images_bw = pad_images(images_bw, padding_value=PAD)
+    text_logits_ctc = pad_sequence(text_logits_ctc, padding_value=PAD, batch_first=True)
+    text_logits_s2s = pad_sequence(text_logits_s2s, padding_value=PAD, batch_first=True)
     tgt_key_mask = subsequent_mask(text_logits_s2s.shape[-1] - 1)
-    tgt_key_padding_mask = text_logits_s2s == padding_value
+    tgt_key_padding_mask = text_logits_s2s == PAD
 
     return {
         'images': images,
@@ -116,8 +115,10 @@ class OnlineFontSquare(Dataset):
     def __getitem__(self, font_id):
         text = self.text_sampler()
         sample = self.transform({'text': text, 'font_id': font_id})
-        sos = self.alphabet.encode([START_OF_SEQUENCE])
-        eos = self.alphabet.encode([END_OF_SEQUENCE])
+        # sos = self.alphabet.encode([START_OF_SEQUENCE])
+        # eos = self.alphabet.encode([END_OF_SEQUENCE])
+        sos = torch.LongTensor([START_OF_SEQUENCE])
+        eos = torch.LongTensor([END_OF_SEQUENCE])
         text_logits_ctc = self.alphabet.encode(text)
         text_logits_s2s = torch.cat([sos, text_logits_ctc, eos])
         unpadded_text_len = len(sample['text'])
@@ -174,7 +175,7 @@ class TextSampler:
 
     def __call__(self):
         words_count = random.randint(self.min_count, self.max_count)
-        words_indexes = torch.randint(0, self.num_words, (words_count,))  # TODO ALSO THE NUMBER OF WORDS SHOULD CHANGE
+        words_indexes = torch.randint(0, self.num_words, (words_count,))
         res = [self.words[i] for i in words_indexes]
         txt = ' '.join(res)
 

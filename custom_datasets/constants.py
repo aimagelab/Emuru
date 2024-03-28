@@ -1,6 +1,6 @@
-PAD = "Φ"  # TODO DO ALL THIS BETTER
-START_OF_SEQUENCE = "Α"
-END_OF_SEQUENCE = "Ω"
+PAD = 0
+START_OF_SEQUENCE = 1
+END_OF_SEQUENCE = 2
 
 
 FONT_SQUARE_CHARSET = [' ', '!', '"', '#', '$', '%', '&', "'", '(', ')', '*', '+', ',', '-', '.', '/', '0', '1', '2',

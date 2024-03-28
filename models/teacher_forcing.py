@@ -2,13 +2,13 @@ import torch
 
 
 class NoisyTeacherForcing:
-    def __init__(self, alphabet_size: int, noise_prob: float = 0.0):
-        self.noise_prob = noise_prob
+    def __init__(self, alphabet_size: int, num_extra_tokens: int, noise_prob: float = 0.0):
         self.alphabet_size = alphabet_size
+        self.num_extra_tokens = num_extra_tokens
+        self.noise_prob = noise_prob
 
     def __call__(self, x, unpadded_text_len):
-        num_extra_tokens = 3  # TODO CHANGE THIS AFTER ALPHABET REFACTORING
-        noise = torch.randint(low=num_extra_tokens-1, high=self.alphabet_size, size=x.shape, device=x.device)
+        noise = torch.randint(low=self.num_extra_tokens - 1, high=self.alphabet_size, size=x.shape, device=x.device)
         prob = torch.rand(size=x.shape, device=x.device)
         prob[:, 0] = 1
 

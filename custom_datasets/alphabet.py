@@ -10,23 +10,24 @@ from .constants import (
 
 class Alphabet:
     def __init__(self, charset):
-        self.extra = [PAD, START_OF_SEQUENCE, END_OF_SEQUENCE]
+        self.pad = PAD
+        self.sos = START_OF_SEQUENCE
+        self.eos = END_OF_SEQUENCE
+        self.num_extra_tokens = 3
 
-        charset_types = [self.extra, charset]
+        charset_types = [charset]
 
         self.char2idx = {}
         self.idx2char = {}
-        self.labels = []
-        current_id = 0
+        current_id = self.num_extra_tokens
         for charset_type in charset_types:
             for char in charset_type:
                 self.char2idx[char] = current_id
                 self.idx2char[current_id] = char
                 current_id += 1
-                self.labels.append(char)
 
     def __len__(self):
-        return len(self.labels)
+        return len(self.char2idx) + self.num_extra_tokens
 
     def encode(self, x_in):
         out = []

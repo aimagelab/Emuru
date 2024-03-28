@@ -35,6 +35,12 @@ from custom_datasets import OnlineFontSquare, TextSampler, collate_fn
 from models.smooth_ce import SmoothCrossEntropyLoss
 import evaluate
 
+from custom_datasets.constants import (
+    START_OF_SEQUENCE,
+    END_OF_SEQUENCE,
+    PAD,
+)
+
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
     datefmt="%m/%d/%Y %H:%M:%S",
@@ -61,9 +67,8 @@ def validation(eval_loader, htr, accelerator, weight_dtype, loss_fn, cer_fn, noi
         loss = loss_fn(output, text_logits_s2s[:, 1:])
 
         predicted_logits = torch.argmax(output, dim=2)
-        eos = torch.tensor(2)  # TODO CHANGE THIS AFTER ALPHABET REFACTORING
-        predicted_characters = eval_loader.dataset.alphabet.decode(predicted_logits, [eos])
-        correct_characters = eval_loader.dataset.alphabet.decode(text_logits_s2s[:, 1:], [eos])
+        predicted_characters = eval_loader.dataset.alphabet.decode(predicted_logits, [END_OF_SEQUENCE])
+        correct_characters = eval_loader.dataset.alphabet.decode(text_logits_s2s[:, 1:], [END_OF_SEQUENCE])
 
         if accelerator.use_distributed:
             accelerator.gather_for_metrics((predicted_characters, correct_characters))
@@ -120,10 +125,6 @@ def train():
     args.adam_beta2 = 0.999
     args.adam_epsilon = 1e-8
     args.adam_weight_decay = 0
-    args.lr_warmup_steps = 32
-    args.kl_scale = 1e-6
-    args.max_grad_norm = 1.0
-    args.height = 64
     args.num_samples_per_epoch = None
 
     args.run_name = args.resume_id if args.resume_id else uuid.uuid4().hex[:4]
@@ -162,7 +163,7 @@ def train():
     htr = HTR.from_config(config_dict)
     htr.requires_grad_(True)
 
-    optimizer = torch.optim.RAdam(
+    optimizer = torch.optim.AdamW(
         htr.parameters(),
         lr=args.lr,
         betas=(args.adam_beta1, args.adam_beta2),
@@ -222,7 +223,7 @@ def train():
     wandb.watch(htr, log="all", log_freq=1)
     smooth_ce_loss = SmoothCrossEntropyLoss(tgt_pad_idx=0)
     cer = evaluate.load('cer')
-    noisy_teacher = NoisyTeacherForcing(len(train_dataset.alphabet), 0.1)
+    noisy_teacher = NoisyTeacherForcing(len(train_dataset.alphabet), train_dataset.alphabet.num_extra_tokens, 0.1)
 
     for epoch in range(train_state.epoch, args.epochs):
 
@@ -248,9 +249,8 @@ def train():
                 loss = smooth_ce_loss(output, text_logits_s2s[:, 1:])
 
                 predicted_logits = torch.argmax(output, dim=2)
-                eos = torch.tensor(2)  # TODO CHANGE THIS AFTER ALPHABET REFACTORING
-                predicted_characters = train_dataset.alphabet.decode(predicted_logits, [eos])
-                correct_characters = train_dataset.alphabet.decode(text_logits_s2s[:, 1:], [eos])
+                predicted_characters = train_dataset.alphabet.decode(predicted_logits, [END_OF_SEQUENCE])
+                correct_characters = train_dataset.alphabet.decode(text_logits_s2s[:, 1:], [END_OF_SEQUENCE])
                 cer_value = cer.compute(predictions=predicted_characters, references=correct_characters)
 
                 if not torch.isfinite(loss):
