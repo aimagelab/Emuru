@@ -194,7 +194,7 @@ def train():
     args.total_params = sum([p.numel() for p in htr.parameters()])
 
     logger.info("***** Running HTR training *****")
-    logger.info(f"  Num train samples = {len(train_dataset)}")
+    logger.info(f"  Num train samples = {len(train_dataset)}. Num steps per epoch = {num_steps_per_epoch}")
     logger.info(f"  Num eval samples = {len(eval_dataset)}")
     logger.info(f"  Num Epochs = {args.epochs}")
     logger.info(f"  Instantaneous batch size per device = {args.train_batch_size}")
@@ -213,15 +213,15 @@ def train():
     cer = evaluate.load('cer')
     noisy_teacher = NoisyTeacherForcing(len(train_dataset.alphabet), train_dataset.alphabet.num_extra_tokens, 0.1)
 
+    progress_bar = tqdm(range(train_state.global_step, args.max_train_steps),
+                        disable=not accelerator.is_local_main_process)
+    progress_bar.set_description("Steps")
+
     for epoch in range(train_state.epoch, args.epochs):
 
         htr.train()
         train_loss = 0.
         train_cer = 0.
-
-        progress_bar = tqdm(range(train_state.global_step, num_steps_per_epoch),
-                            disable=not accelerator.is_local_main_process)
-        progress_bar.set_description("Epoch Steps")
 
         for step, batch in enumerate(train_loader):
 
@@ -276,7 +276,6 @@ def train():
             accelerator.log(logs)
             progress_bar.set_postfix(**logs)
 
-        progress_bar.close()
         train_state.epoch += 1
 
         if epoch % args.eval_epochs == 0:
