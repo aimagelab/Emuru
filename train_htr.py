@@ -50,7 +50,6 @@ def validation(eval_loader, htr, accelerator, weight_dtype, loss_fn, cer_fn, noi
     eval_loss = 0.
     images_for_log = []
 
-    # TODO FONT SQUARE INITIALIZED WITH THE SEED PRODUCES THE SAME TEXT AND IMAGES
     for step, batch in enumerate(eval_loader):
         images = batch['images_bw'].to(weight_dtype)
         text_logits_s2s = batch['text_logits_s2s']
