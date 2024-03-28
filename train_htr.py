@@ -288,7 +288,7 @@ def train():
                     ema_htr.store(htr.parameters())
                     ema_htr.copy_to(htr.parameters())
                     _ = validation(eval_loader, htr, accelerator, weight_dtype, smooth_ce_loss, cer, 'ema')
-                    ema_htr.restore(htr)
+                    ema_htr.restore(htr.parameters())
 
             if accelerator.is_main_process:
                 logger.info(f"Epoch {epoch} - CER: {eval_cer}")

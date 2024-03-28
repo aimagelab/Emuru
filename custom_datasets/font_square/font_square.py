@@ -97,7 +97,6 @@ class OnlineFontSquare(Dataset):
             FT.MergeWithBackground(),
             # FT.GrayscaleErosion(kernel_size=2, p=0.05),
             FT.GrayscaleDilation(kernel_size=2, p=0.1),
-
             FT.ColorJitter(brightness=0.15, contrast=0.15, saturation=0.15, hue=0),
             FT.ImgResize(64),
             # FT.MaxWidth(768),
@@ -115,8 +114,6 @@ class OnlineFontSquare(Dataset):
     def __getitem__(self, font_id):
         text = self.text_sampler()
         sample = self.transform({'text': text, 'font_id': font_id})
-        # sos = self.alphabet.encode([START_OF_SEQUENCE])
-        # eos = self.alphabet.encode([END_OF_SEQUENCE])
         sos = torch.LongTensor([START_OF_SEQUENCE])
         eos = torch.LongTensor([END_OF_SEQUENCE])
         text_logits_ctc = self.alphabet.encode(text)
@@ -172,6 +169,8 @@ class TextSampler:
 
         if self.charset is not None:
             self.words = [word for word in self.words if all([c in self.charset for c in word])]
+
+        self.words = list(self.words)
 
     def __call__(self):
         words_count = random.randint(self.min_count, self.max_count)
