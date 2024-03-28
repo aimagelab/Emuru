@@ -6,6 +6,7 @@ import nltk
 import torch
 from einops import rearrange
 from torch.nn.utils.rnn import pad_sequence
+import random
 
 from ..alphabet import Alphabet
 from ..constants import (
@@ -145,11 +146,17 @@ class HFDataCollector:
 
 
 class TextSampler:
-    def __init__(self, min_len, max_len, count, charset=None):
+    def __init__(self, min_len: int, max_len: int, count, charset=None):
         self.min_len = min_len
         self.max_len = max_len
         self.charset = charset
-        self.count = count
+
+        if isinstance(count, int):
+            self.min_count = count
+            self.max_count = count
+        elif isinstance(count, (tuple, list)):
+            self.min_count = count[0]
+            self.max_count = count[1]
 
         self.load_words()
         self.num_words = len(self.words)
@@ -166,7 +173,8 @@ class TextSampler:
             self.words = [word for word in self.words if all([c in self.charset for c in word])]
 
     def __call__(self):
-        words_indexes = torch.randint(0, self.num_words, (self.count,))  # TODO ALSO THE NUMBER OF WORDS SHOULD CHANGE
+        words_count = random.randint(self.min_count, self.max_count)
+        words_indexes = torch.randint(0, self.num_words, (words_count,))  # TODO ALSO THE NUMBER OF WORDS SHOULD CHANGE
         res = [self.words[i] for i in words_indexes]
         txt = ' '.join(res)
 

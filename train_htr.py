@@ -171,9 +171,9 @@ def train():
         eps=args.adam_epsilon)
 
     train_dataset = OnlineFontSquare('files/font_square/fonts', 'files/font_square/backgrounds',
-                                     TextSampler(8, 32, 6), length=args.num_samples_per_epoch)
+                                     TextSampler(8, 32, (4, 7)), length=args.num_samples_per_epoch)
     eval_dataset = OnlineFontSquare('files/font_square/fonts', 'files/font_square/backgrounds',
-                                    TextSampler(8, 32, 6), length=1024)
+                                    TextSampler(8, 32, (4, 7)), length=1024)
 
     train_loader = DataLoader(train_dataset, batch_size=args.train_batch_size, shuffle=True,
                               collate_fn=collate_fn, num_workers=4, persistent_workers=True)
