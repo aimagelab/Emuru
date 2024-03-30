@@ -67,6 +67,7 @@ class Encoder(nn.Module):
         norm_num_groups: int = 32,
         act_fn: str = "silu",
         double_z: bool = True,
+        add_mid_block=True,
         mid_block_add_attention=True,
         dropout: float = 0.0,
     ):
@@ -108,17 +109,18 @@ class Encoder(nn.Module):
             self.down_blocks.append(down_block)
 
         # mid
-        self.mid_block = UNetMidBlock2D(
-            in_channels=block_out_channels[-1],
-            resnet_eps=1e-6,
-            resnet_act_fn=act_fn,
-            output_scale_factor=1,
-            resnet_time_scale_shift="default",
-            attention_head_dim=block_out_channels[-1],
-            resnet_groups=norm_num_groups,
-            temb_channels=None,
-            add_attention=mid_block_add_attention,
-        )
+        if add_mid_block:
+            self.mid_block = UNetMidBlock2D(
+                in_channels=block_out_channels[-1],
+                resnet_eps=1e-6,
+                resnet_act_fn=act_fn,
+                output_scale_factor=1,
+                resnet_time_scale_shift="default",
+                attention_head_dim=block_out_channels[-1],
+                resnet_groups=norm_num_groups,
+                temb_channels=None,
+                add_attention=mid_block_add_attention,
+            )
 
         # out
         self.conv_norm_out = nn.GroupNorm(num_channels=block_out_channels[-1], num_groups=norm_num_groups, eps=1e-6)
@@ -149,14 +151,16 @@ class Encoder(nn.Module):
                         create_custom_forward(down_block), sample, use_reentrant=False
                     )
                 # middle
-                sample = torch.utils.checkpoint.checkpoint(
-                    create_custom_forward(self.mid_block), sample, use_reentrant=False
-                )
+                if self.mid_block is not None:
+                    sample = torch.utils.checkpoint.checkpoint(
+                        create_custom_forward(self.mid_block), sample, use_reentrant=False
+                    )
             else:
                 for down_block in self.down_blocks:
                     sample = torch.utils.checkpoint.checkpoint(create_custom_forward(down_block), sample)
                 # middle
-                sample = torch.utils.checkpoint.checkpoint(create_custom_forward(self.mid_block), sample)
+                if self.mid_block is not None:
+                    sample = torch.utils.checkpoint.checkpoint(create_custom_forward(self.mid_block), sample)
 
         else:
             # down
@@ -164,7 +168,8 @@ class Encoder(nn.Module):
                 sample = down_block(sample)
 
             # middle
-            sample = self.mid_block(sample)
+            if self.mid_block is not None:
+                sample = self.mid_block(sample)
 
         # post-process
         sample = self.conv_norm_out(sample)

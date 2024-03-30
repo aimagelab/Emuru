@@ -55,7 +55,7 @@ def collate_fn(batch):
         'images_bw': images_bw,
         'texts': texts,
         'unpadded_texts_len': torch.LongTensor(texts_len),
-        'names': names,
+        'names': torch.LongTensor(names),
         'text_logits_ctc': text_logits_ctc,
         'text_logits_s2s': text_logits_s2s,
         'tgt_key_mask': tgt_key_mask,
@@ -128,7 +128,7 @@ class OnlineFontSquare(Dataset):
             'text_logits_ctc': text_logits_ctc,
             'text_logits_s2s': text_logits_s2s,
             'unpadded_text_len': unpadded_text_len,
-            'name': f'{font_id}',
+            'name': int(font_id),
         }
 
 

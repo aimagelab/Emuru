@@ -52,8 +52,6 @@ class HTR(ModelMixin, ConfigMixin):
                  ):
         super(HTR, self).__init__()
 
-        self.feature_extractor = Encoder()
-
         self.feature_extractor = Encoder(
             in_channels=in_channels,
             out_channels=latent_channels,
