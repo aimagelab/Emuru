@@ -41,7 +41,7 @@ def validation(eval_loader, writer_id, accelerator, weight_dtype, loss_fn, accur
 
     for step, batch in enumerate(eval_loader):
         images = batch['images_bw'].to(weight_dtype)
-        authors_id = batch['names']
+        authors_id = batch['writers']
 
         output = writer_id(images)
 
@@ -220,7 +220,7 @@ def train():
 
             with accelerator.accumulate(writer_id):
                 images = batch['images_bw'].to(weight_dtype)
-                authors_id = batch['names']
+                authors_id = batch['writers']
 
                 output = writer_id(images)
 
