@@ -20,7 +20,7 @@ from diffusers.models.attention_processor import (
 from diffusers.models.modeling_outputs import AutoencoderKLOutput
 from diffusers.models.modeling_utils import ModelMixin
 
-from vae import Decoder, DecoderOutput, DiagonalGaussianDistribution, Encoder
+from models.vae import Decoder, DecoderOutput, DiagonalGaussianDistribution, Encoder
 
 
 class AutoencoderKL(ModelMixin, ConfigMixin):
@@ -57,6 +57,7 @@ class AutoencoderKL(ModelMixin, ConfigMixin):
         act_fn: str = "silu",
         latent_channels: int = 4,
         norm_num_groups: int = 32,
+        dropout: float = 0.1,
     ):
         super().__init__()
 
@@ -70,6 +71,7 @@ class AutoencoderKL(ModelMixin, ConfigMixin):
             act_fn=act_fn,
             norm_num_groups=norm_num_groups,
             double_z=True,
+            dropout=dropout,
         )
 
         # pass init params to Decoder
@@ -81,6 +83,7 @@ class AutoencoderKL(ModelMixin, ConfigMixin):
             layers_per_block=layers_per_block,
             norm_num_groups=norm_num_groups,
             act_fn=act_fn,
+            dropout=dropout,
         )
 
         self.quant_conv = nn.Conv2d(2 * latent_channels, 2 * latent_channels, 1)

@@ -120,6 +120,7 @@ class Encoder(nn.Module):
                 resnet_groups=norm_num_groups,
                 temb_channels=None,
                 add_attention=mid_block_add_attention,
+                dropout=dropout,
             )
 
         # out
@@ -213,6 +214,7 @@ class Decoder(nn.Module):
         act_fn: str = "silu",
         norm_type: str = "group",  # group, spatial
         mid_block_add_attention=True,
+        dropout: float = 0.0,
     ):
         super().__init__()
         self.layers_per_block = layers_per_block
@@ -241,6 +243,7 @@ class Decoder(nn.Module):
             resnet_groups=norm_num_groups,
             temb_channels=temb_channels,
             add_attention=mid_block_add_attention,
+            dropout=dropout,
         )
 
         # up
@@ -265,6 +268,7 @@ class Decoder(nn.Module):
                 attention_head_dim=output_channel,
                 temb_channels=temb_channels,
                 resnet_time_scale_shift=norm_type,
+                dropout=dropout,
             )
             self.up_blocks.append(up_block)
             prev_output_channel = output_channel

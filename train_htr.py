@@ -209,7 +209,7 @@ def train():
         accelerator.project_configuration.iteration = train_state.epoch
 
     wandb.watch(htr, log="all", log_freq=1)
-    smooth_ce_loss = SmoothCrossEntropyLoss(tgt_pad_idx=0)
+    smooth_ce_loss = SmoothCrossEntropyLoss(tgt_pad_idx=train_dataset.alphabet.pad)
     cer = evaluate.load('cer')
     noisy_teacher = NoisyTeacherForcing(len(train_dataset.alphabet), train_dataset.alphabet.num_extra_tokens, 0.1)
 
