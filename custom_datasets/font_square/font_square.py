@@ -129,7 +129,7 @@ class OnlineFontSquare(Dataset):
             'text_logits_ctc': text_logits_ctc,
             'text_logits_s2s': text_logits_s2s,
             'unpadded_text_len': unpadded_text_len,
-            'name': f'font_id',
+            'name': f'{font_id}',
         }
 
 

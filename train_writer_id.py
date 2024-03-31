@@ -76,7 +76,7 @@ def train():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output_dir", type=str, default='results', help="output directory")
     parser.add_argument("--logging_dir", type=str, default='results', help="logging directory")
-    parser.add_argument("--train_batch_size", type=int, default=128, help="train batch size")
+    parser.add_argument("--train_batch_size", type=int, default=256, help="train batch size")
     parser.add_argument("--eval_batch_size", type=int, default=128, help="eval batch size")
     parser.add_argument("--epochs", type=int, default=10000, help="number of train epochs")
     parser.add_argument("--lr", type=float, default=1e-4, help="learning rate")
@@ -145,7 +145,7 @@ def train():
         ema_writer_id = EMAModel(ema_writer_id.parameters(), model_cls=WriterID, model_config=writer_id.config)
         accelerator.register_for_checkpointing(ema_writer_id)
 
-    optimizer = torch.optim.AdamW(
+    optimizer = torch.optim.Adam(
         writer_id.parameters(),
         lr=args.lr,
         betas=(args.adam_beta1, args.adam_beta2),
