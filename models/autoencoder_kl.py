@@ -58,6 +58,7 @@ class AutoencoderKL(ModelMixin, ConfigMixin):
         latent_channels: int = 4,
         norm_num_groups: int = 32,
         dropout: float = 0.1,
+        sample_size: int = 768,
     ):
         super().__init__()
 

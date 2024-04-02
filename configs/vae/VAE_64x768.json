@@ -23,5 +23,6 @@
     "UpDecoderBlock2D",
     "UpDecoderBlock2D",
     "UpDecoderBlock2D"
-  ]
+  ],
+  "sample_size": 768
 }
