@@ -55,8 +55,9 @@ def validation(eval_loader, writer_id, accelerator, weight_dtype, loss_fn, accur
         accuracy_fn.add_batch(predictions=predicted_authors.int(), references=authors_id.int())
         eval_loss += loss.item()
 
-        if step < 4:
-            images_for_log.append(wandb.Image(images[0], caption=authors_id.int()[0]))
+        if step == 0:
+            images_for_log.append(wandb.Image(images[0], caption=f'Real: {authors_id.int()[0]}. '
+                                                                 f'Pred: {predicted_authors.int()[0]}'))
 
     accuracy_value = accuracy_fn.compute()['accuracy']
 
