@@ -83,7 +83,7 @@ def train():
     parser.add_argument("--lr", type=float, default=1e-4, help="learning rate")
     parser.add_argument("--seed", type=int, default=24, help="random seed")
     parser.add_argument('--model_save_interval', type=int, default=5, help="model save interval")
-    parser.add_argument("--eval_epochs", type=int, default=5, help="eval interval")
+    parser.add_argument("--eval_epochs", type=int, default=10, help="eval interval")
     parser.add_argument("--resume_id", type=str, default=None, help="resume from checkpoint")
     parser.add_argument("--htr_config", type=str, default='configs/writer_id/WriterID_64x768.json', help='config path')
     parser.add_argument("--report_to", type=str, default="wandb")
@@ -268,8 +268,8 @@ def train():
 
         if epoch % args.eval_epochs == 0:
             with torch.no_grad():
-                eval_cer = validation(eval_loader, writer_id, accelerator, weight_dtype, ce_loss, accuracy)
-                lr_scheduler.step(accuracy_value)
+                eval_accuracy = validation(eval_loader, writer_id, accelerator, weight_dtype, ce_loss, accuracy)
+                lr_scheduler.step(eval_accuracy)
 
                 if args.use_ema:
                     ema_writer_id.store(writer_id.parameters())
@@ -278,7 +278,7 @@ def train():
                     ema_writer_id.restore(writer_id.parameters())
 
             if accelerator.is_main_process:
-                logger.info(f"Epoch {epoch} - CER: {eval_cer}")
+                logger.info(f"Epoch {epoch} - Eval accuracy: {eval_accuracy}")
                 accelerator.save_state()
 
         if accelerator.is_main_process and epoch % args.model_save_interval == 0:

@@ -290,7 +290,7 @@ def train():
                     ema_htr.restore(htr.parameters())
 
             if accelerator.is_main_process:
-                logger.info(f"Epoch {epoch} - CER: {eval_cer}")
+                logger.info(f"Epoch {epoch} - Eval CER: {eval_cer}")
                 accelerator.save_state()
 
         if accelerator.is_main_process and epoch % args.model_save_interval == 0:
