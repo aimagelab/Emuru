@@ -34,8 +34,7 @@ logger = get_logger(__name__)
 
 @torch.no_grad()
 def validation(eval_loader, writer_id, accelerator, weight_dtype, loss_fn, accuracy_fn, wandb_prefix="eval"):
-    htr_model = accelerator.unwrap_model(writer_id)
-    htr_model.eval()
+    writer_id.eval()
     eval_loss = 0.
     images_for_log = []
 
@@ -48,9 +47,16 @@ def validation(eval_loader, writer_id, accelerator, weight_dtype, loss_fn, accur
         loss = loss_fn(output, authors_id)
         predicted_authors = torch.argmax(output, dim=1)
 
+        logger.info(f'GPU {accelerator.device} - {predicted_authors=} - {authors_id=}', main_process_only=False)
+
         if accelerator.use_distributed:
             accelerator.gather_for_metrics((predicted_authors, authors_id))
             accelerator.gather(loss).mean()
+
+        logger.info(f'GPU {accelerator.device} - {predicted_authors=} - {authors_id=}', main_process_only=False)
+
+        import sys
+        sys.exit(0)
 
         accuracy_fn.add_batch(predictions=predicted_authors.int(), references=authors_id.int())
         eval_loss += loss.item()
@@ -68,7 +74,6 @@ def validation(eval_loader, writer_id, accelerator, weight_dtype, loss_fn, accur
             f"{wandb_prefix}/images": images_for_log,
         })
 
-    del writer_id
     torch.cuda.empty_cache()
     return accuracy_value
 
@@ -89,7 +94,7 @@ def train():
     parser.add_argument("--report_to", type=str, default="wandb")
     parser.add_argument("--wandb_project_name", type=str, default="emuru_writer_id", help="wandb project name")
 
-    parser.add_argument("--num_samples_per_epoch", type=int, default=None)
+    parser.add_argument("--num_samples_per_epoch", type=int, default=20)
     parser.add_argument("--lr_scheduler", type=str, default="reduce_lr_on_plateau")
     parser.add_argument("--lr_scheduler_patience", type=int, default=10)
     parser.add_argument("--use_ema", type=str, default="True")
@@ -182,6 +187,7 @@ def train():
         wandb_args = {"wandb": {"entity": "fomo_aiisdh", "name": args.run_name}}
         tracker_config = dict(vars(args))
         accelerator.init_trackers(args.wandb_project_name, tracker_config, wandb_args)
+        wandb.watch(writer_id, log="all", log_freq=1)
 
     num_steps_per_epoch = math.ceil(len(train_loader) / args.gradient_accumulation_steps)
     args.max_train_steps = args.epochs * num_steps_per_epoch
@@ -203,7 +209,6 @@ def train():
         accelerator.load_state()
         accelerator.project_configuration.iteration = train_state.epoch
 
-    wandb.watch(writer_id, log="all", log_freq=1)
     ce_loss = torch.nn.CrossEntropyLoss(label_smoothing=0.1)
     accuracy = evaluate.load('accuracy')
 
@@ -235,7 +240,7 @@ def train():
                     continue
 
                 avg_loss = accelerator.gather(loss).mean()
-                avg_accuracy = accelerator.gather(torch.tensor(accuracy_value)).mean()
+                avg_accuracy = accelerator.gather(torch.tensor(accuracy_value).to(accelerator.device)).mean()
                 train_loss += avg_loss.item() / args.gradient_accumulation_steps
                 train_accuracy += avg_accuracy.item() / args.gradient_accumulation_steps
                 accelerator.backward(loss)

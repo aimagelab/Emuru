@@ -108,7 +108,7 @@ def train():
     parser.add_argument("--report_to", type=str, default="wandb")
     parser.add_argument("--wandb_project_name", type=str, default="emuru_vae", help="wandb project name")
 
-    parser.add_argument("--num_samples_per_epoch", type=int, default=500)
+    parser.add_argument("--num_samples_per_epoch", type=int, default=None)
     parser.add_argument("--lr_scheduler", type=str, default="reduce_lr_on_plateau")
     parser.add_argument("--lr_scheduler_patience", type=int, default=10)
     parser.add_argument("--use_ema", type=str, default="True")

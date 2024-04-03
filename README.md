@@ -12,7 +12,7 @@ conda activate emuru
 conda install pytorch==2.1.0 torchvision==0.16.0 torchaudio==2.1.0 pytorch-cuda=12.1 -c pytorch -c nvidia -y
 pip install -r requirements.txt
 python -m nltk.downloader all
-pip install evaluate jiwer
+pip install evaluate jiwer scikit-learn
 ```
 
 Download the files necessary to run the code:
