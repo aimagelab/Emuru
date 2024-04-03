@@ -47,16 +47,9 @@ def validation(eval_loader, writer_id, accelerator, weight_dtype, loss_fn, accur
         loss = loss_fn(output, authors_id)
         predicted_authors = torch.argmax(output, dim=1)
 
-        logger.info(f'GPU {accelerator.device} - {predicted_authors=} - {authors_id=}', main_process_only=False)
-
         if accelerator.use_distributed:
-            accelerator.gather_for_metrics((predicted_authors, authors_id))
-            accelerator.gather(loss).mean()
-
-        logger.info(f'GPU {accelerator.device} - {predicted_authors=} - {authors_id=}', main_process_only=False)
-
-        import sys
-        sys.exit(0)
+            predicted_authors, authors_id = accelerator.gather_for_metrics((predicted_authors, authors_id))
+            loss = accelerator.gather(loss).mean()
 
         accuracy_fn.add_batch(predictions=predicted_authors.int(), references=authors_id.int())
         eval_loss += loss.item()
@@ -90,13 +83,14 @@ def train():
     parser.add_argument('--model_save_interval', type=int, default=5, help="model save interval")
     parser.add_argument("--eval_epochs", type=int, default=25, help="eval interval")
     parser.add_argument("--resume_id", type=str, default=None, help="resume from checkpoint")
+    parser.add_argument("--run_id", type=str, default=uuid.uuid4().hex[:4], help="uuid of the run")
     parser.add_argument("--htr_config", type=str, default='configs/writer_id/WriterID_64x768.json', help='config path')
     parser.add_argument("--report_to", type=str, default="wandb")
     parser.add_argument("--wandb_project_name", type=str, default="emuru_writer_id", help="wandb project name")
 
-    parser.add_argument("--num_samples_per_epoch", type=int, default=20)
+    parser.add_argument("--num_samples_per_epoch", type=int, default=None)
     parser.add_argument("--lr_scheduler", type=str, default="reduce_lr_on_plateau")
-    parser.add_argument("--lr_scheduler_patience", type=int, default=10)
+    parser.add_argument("--lr_scheduler_patience", type=int, default=50)
     parser.add_argument("--use_ema", type=str, default="True")
     parser.add_argument("--gradient_accumulation_steps", type=int, default=1)
     parser.add_argument("--mixed_precision", type=str, default="no")
@@ -110,7 +104,7 @@ def train():
     args.adam_epsilon = 1e-8
     args.adam_weight_decay = 0
 
-    args.run_name = args.resume_id if args.resume_id else uuid.uuid4().hex[:4]
+    args.run_name = args.resume_id if args.resume_id else args.run_id
     args.output_dir = Path(args.output_dir) / args.run_name
     args.logging_dir = Path(args.logging_dir) / args.run_name
 
@@ -254,6 +248,7 @@ def train():
                 if args.use_ema:
                     ema_writer_id.to(writer_id.device)
                     ema_writer_id.step(writer_id.parameters())
+
                 train_state.global_step += 1
                 logs["global_step"] = train_state.global_step
                 logs['train/loss'] = train_loss
@@ -282,6 +277,7 @@ def train():
                     _ = validation(eval_loader, writer_id, accelerator, weight_dtype, ce_loss, accuracy, 'ema')
                     ema_writer_id.restore(writer_id.parameters())
 
+            accelerator.wait_for_everyone()
             if accelerator.is_main_process:
                 logger.info(f"Epoch {epoch} - Eval accuracy: {eval_accuracy}")
                 accelerator.save_state()
@@ -290,6 +286,7 @@ def train():
             writer_id.save_pretrained(args.output_dir / f"model_{epoch:04d}")
 
     if accelerator.is_main_process:
+        accelerator.wait_for_everyone()
         writer_id = accelerator.unwrap_model(writer_id)
         writer_id.save_pretrained(args.output_dir)
 
