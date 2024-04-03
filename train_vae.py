@@ -34,15 +34,15 @@ logger = get_logger(__name__)
 
 @torch.no_grad()
 def validation(eval_loader, vae, accelerator, weight_dtype, loss_fn, global_step, wandb_prefix="eval"):
-    vae_model = accelerator.unwrap_model(vae)
-    vae_model.eval()
+    vae.eval()
     eval_loss = 0.
     images_for_log = []
+    images_for_log_w_htr_wid = []
 
     for step, batch in enumerate(eval_loader):
         images = batch['images'].to(weight_dtype)
         targets = batch['images_bw'].to(weight_dtype)
-        writers = batch['writers'].to(weight_dtype)
+        writers = batch['writers']
 
         text_logits_s2s = batch['text_logits_s2s']
         text_logits_s2s_unpadded_len = batch['unpadded_texts_len']
@@ -53,33 +53,39 @@ def validation(eval_loader, vae, accelerator, weight_dtype, loss_fn, global_step
         z = posterior.sample()
         pred = vae.decode(z).sample
 
-        loss, log_dict = loss_fn(images=targets, reconstructions=pred, posteriors=posterior,
-                                 writers=writers, text_logits_s2s=text_logits_s2s,
-                                 text_logits_s2s_length=text_logits_s2s_unpadded_len,
-                                 tgt_key_padding_mask=tgt_key_padding_mask, source_mask=tgt_mask,
-                                 split="train")
+        loss, log_dict, wandb_media_log = loss_fn(images=targets, reconstructions=pred, posteriors=posterior,
+                                                  writers=writers, text_logits_s2s=text_logits_s2s,
+                                                  text_logits_s2s_length=text_logits_s2s_unpadded_len,
+                                                  tgt_key_padding_mask=tgt_key_padding_mask, source_mask=tgt_mask,
+                                                  split=wandb_prefix)
 
         eval_loss += loss.item()
 
-        if step < 4:
+        if step == 0:
             images_for_log.append(torch.cat([images.cpu(), pred.repeat(1, 3, 1, 1).cpu()], dim=-1)[:8])
 
+        if step < 2:
+            author_id = batch['writers'][0].item()
+            pred_author_id = wandb_media_log[f'{wandb_prefix}/predicted_authors'][0][0]
+            text = batch['texts'][0]
+            pred_text = wandb_media_log[f'{wandb_prefix}/predicted_characters'][0][0]
+            images_for_log_w_htr_wid.append(wandb.Image(
+                images.cpu()[0],
+                caption=f'AID: {author_id}, Pred AID: {pred_author_id}, Text: {text}, Pred Text: {pred_text}')
+            )
+
     grid_nrows = 2
-    accelerator.log({
-        **log_dict,
-        "eval_loss": eval_loss / len(eval_loader),
-        "Original (left), Reconstruction (right)":
-            [wandb.Image(torchvision.utils.make_grid(image, nrow=grid_nrows, normalize=True, value_range=(-1, 1))) for
-             _, image in enumerate(images_for_log)]
-    })
 
     if accelerator.is_main_process:
         accelerator.log({
+            **log_dict,
             f"{wandb_prefix}/loss": eval_loss / len(eval_loader),
-            f"{wandb_prefix}/original (left), recon (right)": images_for_log,
+            "Original (left), Reconstruction (right)":
+                [wandb.Image(torchvision.utils.make_grid(image, nrow=grid_nrows, normalize=True, value_range=(-1, 1)))
+                 for _, image in enumerate(images_for_log)],
+            "Image, HTR and Writer ID": images_for_log_w_htr_wid
         })
 
-    del vae_model
     torch.cuda.empty_cache()
     return eval_loss / len(eval_loader)
 
@@ -98,11 +104,11 @@ def train():
     parser.add_argument("--resume_id", type=str, default=None, help="resume from checkpoint")
     parser.add_argument("--vae_config", type=str, default='configs/vae/VAE_64x768.json', help='vae config path')
     parser.add_argument("--htr_path", type=str, default='results/8da9/model_1000', help='htr checkpoint path')
-    parser.add_argument("--writer_id_path", type=str, default='results/f538/model_0350', help='writerid config path')
+    parser.add_argument("--writer_id_path", type=str, default='results/b12a/model_1095', help='writerid config path')
     parser.add_argument("--report_to", type=str, default="wandb")
-    parser.add_argument("--wandb_project_name", type=str, default="emuru_htr", help="wandb project name")
+    parser.add_argument("--wandb_project_name", type=str, default="emuru_vae", help="wandb project name")
 
-    parser.add_argument("--num_samples_per_epoch", type=int, default=None)
+    parser.add_argument("--num_samples_per_epoch", type=int, default=500)
     parser.add_argument("--lr_scheduler", type=str, default="reduce_lr_on_plateau")
     parser.add_argument("--lr_scheduler_patience", type=int, default=10)
     parser.add_argument("--use_ema", type=str, default="True")
@@ -182,7 +188,8 @@ def train():
         scheduler_specific_kwargs={"patience": args.lr_scheduler_patience}
     )
 
-    loss_fn = AutoencoderLoss(alphabet=train_dataset.alphabet, htr_path=args.htr_path, writer_id_path=args.writer_id_path)
+    loss_fn = AutoencoderLoss(alphabet=train_dataset.alphabet, htr_path=args.htr_path,
+                              writer_id_path=args.writer_id_path)
 
     vae, optimizer, train_loader, eval_loader, lr_scheduler, loss_fn = accelerator.prepare(
         vae, optimizer, train_loader, eval_loader, lr_scheduler, loss_fn)
@@ -245,11 +252,11 @@ def train():
                     z = posterior.sample()
                     pred = vae.decode(z).sample
 
-                    loss, log_dict = loss_fn(images=targets, reconstructions=pred, posteriors=posterior,
-                                             writers=writers, text_logits_s2s=text_logits_s2s,
-                                             text_logits_s2s_length=text_logits_s2s_unpadded_len,
-                                             tgt_key_padding_mask=tgt_key_padding_mask, source_mask=tgt_mask,
-                                             split="train")
+                    loss, log_dict, _ = loss_fn(images=targets, reconstructions=pred, posteriors=posterior,
+                                                writers=writers, text_logits_s2s=text_logits_s2s,
+                                                text_logits_s2s_length=text_logits_s2s_unpadded_len,
+                                                tgt_key_padding_mask=tgt_key_padding_mask, source_mask=tgt_mask,
+                                                split="train")
 
                     if not torch.isfinite(loss):
                         logger.info("\nWARNING: non-finite loss")
@@ -261,7 +268,6 @@ def train():
                     accelerator.backward(loss)
 
                     optimizer.step()
-                    lr_scheduler.step()
                     optimizer.zero_grad()
 
                 logs = {}
@@ -284,7 +290,8 @@ def train():
         train_state.epoch += 1
         if epoch % args.eval_epochs == 0:
             with torch.no_grad():
-                eval_loss, eval_log_dict = validation(eval_loader, vae, accelerator, weight_dtype, loss_fn, train_state.global_step)
+                eval_loss, eval_log_dict = validation(eval_loader, vae, accelerator, weight_dtype, loss_fn,
+                                                      train_state.global_step)
                 lr_scheduler.step(eval_loss)
 
                 if args.use_ema:

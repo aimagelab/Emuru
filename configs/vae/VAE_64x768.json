@@ -12,7 +12,6 @@
     "DownEncoderBlock2D",
     "DownEncoderBlock2D"
   ],
-  "force_upcast": true,
   "in_channels": 3,
   "latent_channels": 1,
   "layers_per_block": 2,

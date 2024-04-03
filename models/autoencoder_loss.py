@@ -51,28 +51,31 @@ class AutoencoderLoss(nn.Module):
 
         rec_loss = torch.abs(images.contiguous() - reconstructions.contiguous())
         nll_loss = rec_loss
-        writer_loss = torch.tensor(0.0, device=images.device)
         htr_loss = torch.tensor(0.0, device=images.device)
-        htr_rec_loss = torch.tensor(0.0, device=images.device)
         cer = torch.tensor(0.0, device=images.device)
+        writer_loss = torch.tensor(0.0, device=images.device)
         acc = torch.tensor(0.0, device=images.device)
+        predicted_characters_htr = []
+        predicted_authors_writer_id = []
 
         if self.htr is not None:
             text_logits_s2s_noisy = self.noisy_teacher(text_logits_s2s, text_logits_s2s_length)
-            output_htr = self.htr(images, text_logits_s2s_noisy[:, :-1], source_mask, tgt_key_padding_mask[:, :-1])
+            output_htr = self.htr(reconstructions, text_logits_s2s_noisy[:, :-1], source_mask, tgt_key_padding_mask[:, :-1])
             htr_loss = self.htr_criterion(output_htr, text_logits_s2s[:, 1:])
             predicted_logits = torch.argmax(output_htr, dim=2)
             predicted_characters = self.alphabet.decode(predicted_logits, [self.alphabet.eos])
             correct_characters = self.alphabet.decode(text_logits_s2s[:, 1:], [self.alphabet.eos])
             cer = self.cer.compute(predictions=predicted_characters, references=correct_characters)
             nll_loss = nll_loss + self.htr_weight * htr_loss
+            predicted_characters_htr.append(predicted_characters)
 
         if self.writer_id is not None:
-            output_writer_id = self.writer_id(images)
+            output_writer_id = self.writer_id(reconstructions)
             writer_loss = self.writer_criterion(output_writer_id, writers)
             predicted_authors = torch.argmax(output_writer_id, dim=1)
             acc = self.accuracy.compute(predictions=predicted_authors.int(), references=writers.int())['accuracy']
             nll_loss = nll_loss + self.writer_weight * writer_loss
+            predicted_authors_writer_id.append(list(predicted_authors))
 
         nll_loss = nll_loss / torch.exp(self.log_var) + self.log_var
         nll_loss = nll_loss.mean()
@@ -80,16 +83,20 @@ class AutoencoderLoss(nn.Module):
 
         loss = nll_loss + self.kl_weight * kl_loss
 
-        log = {f"{split}/total_loss": loss.detach().mean(),
-               f"{split}/log_var": self.log_var.detach(),
-               f"{split}/kl_loss": kl_loss.detach().mean(),
-               f"{split}/nll_loss": nll_loss.detach().mean(),
-               f"{split}/rec_loss": rec_loss.detach().mean(),
-               f"{split}/writer_loss": writer_loss.detach().mean(),
-               f"{split}/HTR_loss": htr_loss.detach().mean(),
-               f"{split}/HTR_rec_loss": htr_rec_loss.detach().mean(),
-               f"{split}/cer": cer.mean(),
-               f"{split}/acc": acc.mean(),
+        log = {f"{split}/total_loss": loss.detach().mean().item(),
+               f"{split}/log_var": self.log_var.detach().item(),
+               f"{split}/kl_loss": kl_loss.detach().mean().item(),
+               f"{split}/nll_loss": nll_loss.detach().mean().item(),
+               f"{split}/rec_loss": rec_loss.detach().mean().item(),
+               f"{split}/writer_loss": writer_loss.detach().mean().item(),
+               f"{split}/HTR_loss": htr_loss.detach().mean().item(),
+               f"{split}/cer": cer,
+               f"{split}/acc": acc,
                }
 
-        return loss, log
+        wandb_media_log = {
+            f'{split}/predicted_characters': predicted_characters_htr,
+            f'{split}/predicted_authors': predicted_authors_writer_id
+        }
+
+        return loss, log, wandb_media_log
