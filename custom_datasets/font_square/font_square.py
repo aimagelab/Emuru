@@ -50,8 +50,8 @@ class OnlineFontSquare(Dataset):
 
             FT.ColorJitter(brightness=0.15, contrast=0.15, saturation=0.15, hue=0),
             FT.ImgResize(64),
-            FT.MaxWidth(768),
-            FT.PadDivisible(32),
+            FT.FixedWidth(768),
+            FT.PadDivisible(8),
             FT.Normalize((0.5,), (0.5,))
         ]) if transform is None else transform
 

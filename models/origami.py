@@ -237,7 +237,7 @@ class InitBlock(nn.Module):
 
 
 class OrigamiNet(nn.Module):
-    def __init__(self, o_classes, n_channels=3, wmul=1.0, lreszs=None, lszs=None, nlyrs=12, fup=33, GradCheck=0, reduceAxis=3, **kwargs):
+    def __init__(self, o_classes, n_channels=3, wmul=1.0, lreszs=None, lszs=None, nlyrs=12, fup=33, GradCheck=0, reduceAxis=3):
         super().__init__()
 
         self.lreszs = lreszs
@@ -284,6 +284,15 @@ class OrigamiNet(nn.Module):
         self.it = 0
         self.gc = GradCheck
         self.reduceAxis = reduceAxis
+
+
+    @staticmethod
+    def from_checkpoint(checkpoint, **kwargs):
+        model = OrigamiNet(**kwargs)
+        checkpoint = torch.load(checkpoint)
+        model.load_state_dict(checkpoint['model'])
+        return model
+
 
     def forward(self, x):
         x = self.Initsq(x)

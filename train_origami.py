@@ -18,95 +18,15 @@ from utils import MetricCollector
 from torchvision.utils import make_grid
 
 from models import AutoencoderKL as LightningAutoencoderKL
+import torch.nn.init as init
 
+def init_bn(model):
+    if type(model) in [torch.nn.InstanceNorm2d, torch.nn.BatchNorm2d]:
+        init.ones_(model.weight)
+        init.zeros_(model.bias)
 
-class Emuru(torch.nn.Module):
-    def __init__(self, t5_checkpoint="google-t5/t5-small", vae_checkpoint='files/checkpoints/lightning_vae/vae.ckpt', slices_per_query=1):
-        super(Emuru, self).__init__()
-        self.tokenizer = AutoTokenizer.from_pretrained('google/byt5-small')  # per-character tokenizer
-        self.data_collator = HFDataCollector(tokenizer=self.tokenizer)
-
-        config = T5Config.from_pretrained(t5_checkpoint)
-        config.vocab_size = len(self.tokenizer)
-        self.T5 = T5ForConditionalGeneration(config)
-        self.T5.lm_head = torch.nn.Linear(config.d_model, 8 * slices_per_query, bias=False)
-
-        self.sos = torch.nn.Embedding(1, config.d_model)
-
-        # self.vae = AutoencoderKL.from_pretrained(vae_checkpoint)
-        self.vae = LightningAutoencoderKL.load_from_checkpoint(vae_checkpoint, strict=False)
-        self.set_vae_training(False)
-        
-        self.query_emb = torch.nn.Linear(8 * slices_per_query, config.d_model)
-        self.query_rearrange = Rearrange('b c h (w q) -> b w (q c h)', q=slices_per_query)
-        self.z_rearrange = Rearrange('b w (q c h) -> b c h (w q)', c=1, q=slices_per_query)
-        self.z_rearrange_eval = Rearrange('w b (q c h) -> b c h (w q)', c=1, q=slices_per_query)
-
-        self.criterion = MSELoss()
-        self.trainer = None
-
-    def set_vae_training(self, training):
-        self.vae.train() if training else self.vae.eval()
-        for param in self.vae.parameters():
-            param.requires_grad = training
-
-    def _img_encode(self, img):
-        posterior = self.vae.encode(img.float())
-        z = posterior.sample()
-        z_sequence = self.query_rearrange(z)
-        decoder_inputs_embeds = self.query_emb(z_sequence)
-        sos = repeat(self.sos.weight, '1 d -> b 1 d', b=decoder_inputs_embeds.size(0))
-        decoder_inputs_embeds = torch.cat([sos, decoder_inputs_embeds], dim=1)
-        return decoder_inputs_embeds, z_sequence, z
-
-    def forward(self, text=None, img=None, input_ids=None, attention_mask=None, length=None):
-        decoder_inputs_embeds, z_sequence, z = self._img_encode(img)
-        output = self.T5(input_ids, attention_mask=attention_mask, decoder_inputs_embeds=decoder_inputs_embeds)
-        loss = self.criterion(output.logits[:, :-1], z_sequence)
-        return loss, self.z_rearrange(output.logits[:, :-1]), z
-    
-    def generate(self, text=None, img=None, input_ids=None, max_new_tokens=96, decoder_truncate=None):
-        assert text is not None or input_ids is not None, 'Either text or input_ids must be provided'
-        if input_ids is None:
-            input_ids = self.tokenizer(text, return_tensors='pt').input_ids
-            input_ids = input_ids.to(next(self.T5.parameters()).device)
-
-        decoder_inputs_embeds, z_sequence, z = None, None, None
-        if img is not None:
-            decoder_inputs_embeds, z_sequence, z = self._img_encode(img)
-
-        if decoder_truncate is not None and z_sequence is not None:
-            decoder_inputs_embeds = decoder_inputs_embeds[:, :decoder_truncate]
-            z_sequence = z_sequence[:, :decoder_truncate]
-            z = self.z_rearrange(z_sequence)
-        
-        output = self.T5.generate(input_ids,
-                                  max_new_tokens=max_new_tokens,
-                                  return_dict_in_generate=True,
-                                  output_scores=True,
-                                  decoder_inputs_embeds=decoder_inputs_embeds,
-                                  )
-        
-        scores = self.z_rearrange_eval(torch.stack(output.scores))
-        if z is not None:
-            scores = torch.cat([z, scores], dim=-1)
-        img = torch.clamp(self.vae.decode(scores), -1, 1)
-        return img
-    
-    def save_pretrained(self, path):
-        path = Path(path)
-        path.mkdir(parents=True, exist_ok=True)
-        torch.save(self.T5.state_dict(), path / 'T5.pth')
-        torch.save(self.vae.state_dict(), path / 'VAE.pth')
-        torch.save(self.query_emb.state_dict(), path / 'query_emb.pth')
-        torch.save(self.sos.state_dict(), path / 'sos.pth')
-
-    def load_pretrained(self, path):
-        path = Path(path)
-        self.T5.load_state_dict(torch.load(path / 'T5.pth'))
-        self.vae.load_state_dict(torch.load(path / 'VAE.pth'))
-        self.query_emb.load_state_dict(torch.load(path / 'query_emb.pth'))
-        self.sos.load_state_dict(torch.load(path / 'sos.pth'))
+    elif type(model) in [torch.nn.Conv2d]:
+        init.kaiming_uniform_(model.weight)
 
 
 def train(args):
@@ -115,12 +35,28 @@ def train(args):
     loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, collate_fn=dataset.collate_fn, drop_last=True,
                         num_workers=args.dataloader_num_workers, persistent_workers=args.dataloader_num_workers > 0)
 
-    model = OrigamiNet(len(text_sampler.charset) + 1, n_channels=1).to(args.device)
+    model = OrigamiNet(len(text_sampler.charset) + 1, n_channels=1)
+    model.apply(init_bn)
+    model.to(args.device)
+
     text_encoder = CTCLabelConverter(text_sampler.charset).to(args.device)
     vae = LightningAutoencoderKL.load_from_checkpoint(args.vae_checkpoint, strict=False).to(args.device)
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
-    criterion = torch.nn.CTCLoss()
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate)
+    lr_scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=10**(-1/90000))
+    criterion = torch.nn.CTCLoss(reduction='mean', zero_infinity=True)
+
+    if args.resume:
+        checkpoint = torch.load(Path(args.output_dir) / 'origami.pth')
+        if 'model' in checkpoint:
+            model.load_state_dict(checkpoint['model'])
+            optimizer.load_state_dict(checkpoint['optimizer'])
+            lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
+            args.start_epoch = checkpoint['epoch']
+            args = checkpoint['args']
+        else:
+            model.load_state_dict(checkpoint)
+        print(f'Resuming training from epoch {args.start_epoch}')
 
     # eval_fonts = sorted(Path('files/font_square/fonts').rglob('*.ttf'))[:100]
     # dataset_eval = OnlineFontSquare(eval_fonts, [], FixedTextSampler('this is a test'))
@@ -129,7 +65,7 @@ def train(args):
     if args.wandb: wandb.init(project='Emuru_origami', config=args)
     collector = MetricCollector()
 
-    for epoch in range(args.num_train_epochs):
+    for epoch in range(args.start_epoch, args.num_train_epochs):
         model.train()
         for i, batch in tqdm(enumerate(loader), total=len(loader), desc=f'Epoch {epoch}'):
             batch = {k: v.to(args.device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
@@ -140,10 +76,14 @@ def train(args):
                 posterior = vae.encode(batch['bw_img'].float())
                 z = posterior.sample()
             preds = model(z)
+            # preds = model(batch['bw_img'].float())
 
-            preds_size = torch.IntTensor([preds.size(1)] * args.batch_size).to(args.device)
+            preds_len = torch.IntTensor([preds.size(1)] * args.batch_size).to(args.device)
             preds = preds.permute(1, 0, 2).log_softmax(2)
-            loss = criterion(preds, enc_text, preds_size, enc_text_len)
+
+            torch.backends.cudnn.enabled = False
+            loss = criterion(preds, enc_text, preds_len, enc_text_len)
+            torch.backends.cudnn.enabled = True
 
             optimizer.zero_grad()
             loss.backward()
@@ -153,20 +93,28 @@ def train(args):
 
         with torch.no_grad():
             model.eval()
-            pred = torch.clamp(model.vae.decode(pred), -1, 1)
-            gt = torch.clamp(model.vae.decode(gt), -1, 1)
-            img = torch.cat([batch['img'], gt, pred], dim=-1)[:16]
-            test_img = model.generate(input_ids=batch['input_ids'], img=None, max_new_tokens=96 - 16, decoder_truncate=16)[:16]
+            dec_text = text_encoder.decode(preds.permute(1, 0, 2).argmax(-1), preds_len)[:4]
+            for gt, txt in zip(batch['text'], dec_text):
+                print(gt)
+                print(txt)
             if args.wandb: wandb.log({
-                # 'img_recon_pred': wandb.Image(make_grid(img, nrow=1, normalize=True)),
-                # 'this_is_a_test': wandb.Image(make_grid(test_img, nrow=1, normalize=True)),
+                'lr': lr_scheduler.get_lr()[0],
+                'sample_img': wandb.Image(batch['bw_img'][0], caption=f'{batch["text"][0]}\n{dec_text[0]}'),
             } | collector.dict())
                 
-        # if epoch % 10 == 0 and epoch > 0:
-        #     model.save_pretrained(args.output_dir)
-        #     print(f'Saved model at epoch {epoch} in {args.output_dir}')
+        if epoch % 10 == 0 and epoch > 0:
+            Path(args.output_dir).mkdir(parents=True, exist_ok=True)
+            torch.save({
+                'model': model.state_dict(),
+                'optimizer': optimizer.state_dict(),
+                'lr_scheduler': lr_scheduler.state_dict(),
+                'epoch': epoch,
+                'args': args,
+            }, Path(args.output_dir) / 'origami.pth')
+            print(f'Saved model at epoch {epoch} in {args.output_dir}')
         
         collector.reset()
+        lr_scheduler.step()
 
 
 if __name__ == '__main__':
@@ -177,6 +125,7 @@ if __name__ == '__main__':
     parser.add_argument('--output_dir', type=str, default='files/checkpoints/Emuru_sm', help='Output directory')
     parser.add_argument('--learning_rate', type=float, default=0.0001, help='Learning rate')
     parser.add_argument('--batch_size', type=int, default=64, help='Batch size')
+    parser.add_argument('--start_epoch', type=int, default=0, help='Start epoch')
     parser.add_argument('--weight_decay', type=float, default=0.01, help='Weight decay')
     parser.add_argument('--num_train_epochs', type=int, default=10 ** 10, help='Number of train epochs')
     parser.add_argument('--report_to', type=str, default='none', help='Report to')

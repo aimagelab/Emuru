@@ -147,6 +147,25 @@ class MaxWidth:
         sample['bg_patch'] = sample['bg_patch'][:, :, :self.width]
 
         return sample
+
+
+class FixedWidth:
+    def __init__(self, width):
+        self.width = width
+
+    def __call__(self, sample):
+        _, h, w = sample['img'].shape
+        if w == self.width:
+            return sample
+        elif w < self.width:
+            sample['img'] = F.pad(sample['img'], (0, 0, self.width - w, 0), fill=1)
+            sample['bw_img'] = F.pad(sample['bw_img'], (0, 0, self.width - w, 0), fill=1)
+            sample['bg_patch'] = F.pad(sample['bg_patch'], (0, 0, self.width - w, 0), fill=1)
+        else:
+            sample['img'] = sample['img'][:, :, :self.width]
+            sample['bw_img'] = sample['bw_img'][:, :, :self.width]
+            sample['bg_patch'] = sample['bg_patch'][:, :, :self.width]
+        return sample
     
 
 class PadDivisible:
