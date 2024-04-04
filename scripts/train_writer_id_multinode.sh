@@ -32,14 +32,14 @@ export LAUNCHER="accelerate launch \
     --main_process_ip $head_node_ip \
     --main_process_port 29500 \
     "
-export SCRIPT="train_writer_id.py"
+export PYTHON_FILE="train_writer_id.py"
 
 cd /work/FoMo_AIISDH/fquattrini/emuru || exit
 source activate emuru
 
 if [[ "$SLURM_ARRAY_TASK_ID" == "0" ]]; then
 export OMP_NUM_THREADS=8
-export SCRIPT_ARGS=" \
+export PYTHON_ARGS=" \
     --mixed_precision bf16 \
     --output_dir /work/FoMo_AIISDH/scascianelli/2024_emuru \
     --logging_dir /work/FoMo_AIISDH/scascianelli/2024_emuru \
@@ -49,7 +49,7 @@ export SCRIPT_ARGS=" \
     "
 
 # This step is necessary because accelerate launch does not handle multiline arguments properly
-export CMD="$LAUNCHER $PYTHON_FILE $ARGS"
+export CMD="$LAUNCHER $PYTHON_FILE $PYTHON_ARGS"
 srun $CMD
 fi
 
