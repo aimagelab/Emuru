@@ -7,6 +7,8 @@ import torch
 from einops import rearrange
 from torch.nn.utils.rnn import pad_sequence
 import random
+import msgpack
+from pathlib import Path
 
 from ..alphabet import Alphabet
 from ..constants import (
@@ -145,7 +147,9 @@ class HFDataCollector:
 
 
 class TextSampler:
-    def __init__(self, min_len: int, max_len: int, count, charset=None):
+    def __init__(self, min_len: int, max_len: int, count, charset=None,
+                 words_dict_path='files/font_square/words_dict.msgpack'):
+
         self.min_len = min_len
         self.max_len = max_len
         self.charset = charset
@@ -157,25 +161,41 @@ class TextSampler:
             self.min_count = count[0]
             self.max_count = count[1]
 
-        self.load_words()
+        self.load_words(words_dict_path)
         self.num_words = len(self.words)
 
-    def load_words(self):
-        self.words = nltk.corpus.abc.words()
-        self.words += nltk.corpus.brown.words()
-        self.words += nltk.corpus.genesis.words()
-        self.words += nltk.corpus.inaugural.words()
-        self.words += nltk.corpus.state_union.words()
-        self.words += nltk.corpus.webtext.words()
+    def load_words(self, words_dict_path):
+        if Path(words_dict_path).exists():
+            with open(words_dict_path, 'rb') as file:
+                packed_data = file.read()
+                words_frequencies_dict = msgpack.unpackb(packed_data)
+            self.words = list(words_frequencies_dict.keys())
+            assert len(self.words) == 103411, 'Words count mismatch. Expected 103411 words.'
+            self.words_frequencies = torch.tensor(list(words_frequencies_dict.values()), dtype=torch.float)
+        else:
+            words = nltk.corpus.abc.words()
+            words += nltk.corpus.brown.words()
+            words += nltk.corpus.genesis.words()
+            words += nltk.corpus.inaugural.words()
+            words += nltk.corpus.state_union.words()
+            words += nltk.corpus.webtext.words()
 
-        if self.charset is not None:
-            self.words = [word for word in self.words if all([c in self.charset for c in word])]
+            if self.charset is not None:
+                words = [word for word in words if all([c in self.charset for c in word])]
 
-        self.words = list(self.words)
+            words = list(words)
+            words_unique = list(set(words))
+            words_frequencies_dict = {word: words.count(word) for word in words_unique}
+            with open(words_dict_path, 'wb') as file:
+                packed_data = msgpack.packb(words_frequencies_dict)
+                file.write(packed_data)
+
+            self.words = words_unique
+            self.words_frequencies = torch.tensor(list(words_frequencies_dict.values()), dtype=torch.float)
 
     def __call__(self):
         words_count = random.randint(self.min_count, self.max_count)
-        words_indexes = torch.randint(0, self.num_words, (words_count,))
+        words_indexes = torch.multinomial(self.words_frequencies, words_count, replacement=True)
         res = [self.words[i] for i in words_indexes]
         txt = ' '.join(res)
 
