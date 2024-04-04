@@ -72,7 +72,6 @@ class HTR(ModelMixin, ConfigMixin):
         self.mem_pe = A2DPE(d_model=d_model, dropout=htr_dropout) if use_mem_pe else None
         self.tgt_pe = PositionalEncoding1D(d_model=d_model, dropout=htr_dropout) if use_tgt_pe else None
 
-        # TODO all manually implemented in original code
         encoder_layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=1)
         self.transformer_encoder = nn.TransformerEncoder(
             encoder_layer, num_layers=num_encoder_layers, norm=nn.LayerNorm(d_model), enable_nested_tensor=False)
