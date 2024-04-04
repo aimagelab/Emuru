@@ -104,7 +104,7 @@ def train():
     parser.add_argument("--resume_id", type=str, default=None, help="resume from checkpoint")
     parser.add_argument("--vae_config", type=str, default='configs/vae/VAE_64x768.json', help='vae config path')
     parser.add_argument("--htr_path", type=str, default='results/8da9/model_1000', help='htr checkpoint path')
-    parser.add_argument("--writer_id_path", type=str, default='results/b12a/model_1095', help='writerid config path')
+    parser.add_argument("--writer_id_path", type=str, default='results/b12a/model_2900', help='writerid config path')
     parser.add_argument("--report_to", type=str, default="wandb")
     parser.add_argument("--wandb_project_name", type=str, default="emuru_vae", help="wandb project name")
 
