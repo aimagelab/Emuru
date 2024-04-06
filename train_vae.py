@@ -33,46 +33,59 @@ logger = get_logger(__name__)
 
 
 @torch.no_grad()
-def validation(eval_loader, vae, accelerator, weight_dtype, loss_fn, global_step, wandb_prefix="eval"):
+def validation(eval_loader, vae, accelerator, loss_fn, weight_dtype, wandb_prefix="eval"):
     vae.eval()
     eval_loss = 0.
     images_for_log = []
     images_for_log_w_htr_wid = []
 
     for step, batch in enumerate(eval_loader):
-        images = batch['images'].to(weight_dtype)
-        targets = batch['images_bw'].to(weight_dtype)
-        writers = batch['writers']
+        with accelerator.autocast():
+            images = batch['images'].to(weight_dtype)
+            targets = batch['images_bw'].to(weight_dtype)
+            writers = batch['writers']
 
-        text_logits_s2s = batch['text_logits_s2s']
-        text_logits_s2s_unpadded_len = batch['unpadded_texts_len']
-        tgt_mask = batch['tgt_key_mask']
-        tgt_key_padding_mask = batch['tgt_key_padding_mask']
+            text_logits_s2s = batch['text_logits_s2s']
+            text_logits_s2s_unpadded_len = batch['unpadded_texts_len']
+            tgt_mask = batch['tgt_key_mask']
+            tgt_key_padding_mask = batch['tgt_key_padding_mask']
 
-        posterior = vae.encode(images).latent_dist
-        z = posterior.sample()
-        pred = vae.decode(z).sample
+            if accelerator.num_processes > 1:
+                posterior = vae.module.encode(images).latent_dist
+            else:
+                posterior = vae.encode(images).latent_dist
+            z = posterior.sample()
+            if accelerator.num_processes > 1:
+                pred = vae.module.decode(z).sample
+            else:
+                pred = vae.decode(z).sample
 
-        loss, log_dict, wandb_media_log = loss_fn(images=targets, reconstructions=pred, posteriors=posterior,
-                                                  writers=writers, text_logits_s2s=text_logits_s2s,
-                                                  text_logits_s2s_length=text_logits_s2s_unpadded_len,
-                                                  tgt_key_padding_mask=tgt_key_padding_mask, source_mask=tgt_mask,
-                                                  split=wandb_prefix)
+            loss, log_dict, wandb_media_log = loss_fn(images=targets, reconstructions=pred, posteriors=posterior,
+                                                      writers=writers, text_logits_s2s=text_logits_s2s,
+                                                      text_logits_s2s_length=text_logits_s2s_unpadded_len,
+                                                      tgt_key_padding_mask=tgt_key_padding_mask, source_mask=tgt_mask,
+                                                      split=wandb_prefix)
 
-        eval_loss += loss.item()
+            if accelerator.use_distributed:
+                logger.info(f"Gathering loss across all processes... {accelerator.device}: {loss}, {log_dict}")
+                loss = accelerator.gather(loss).mean()
+                log_dict = accelerator.gather_for_metrics(log_dict)
+                logger.info(f"Done gathering loss across all processes... {accelerator.device}: {loss}, {log_dict}")
 
-        if step == 0:
-            images_for_log.append(torch.cat([images.cpu(), pred.repeat(1, 3, 1, 1).cpu()], dim=-1)[:8])
+            eval_loss += loss.item()
 
-        if step < 2:
-            author_id = batch['writers'][0].item()
-            pred_author_id = wandb_media_log[f'{wandb_prefix}/predicted_authors'][0][0]
-            text = batch['texts'][0]
-            pred_text = wandb_media_log[f'{wandb_prefix}/predicted_characters'][0][0]
-            images_for_log_w_htr_wid.append(wandb.Image(
-                images.cpu()[0],
-                caption=f'AID: {author_id}, Pred AID: {pred_author_id}, Text: {text}, Pred Text: {pred_text}')
-            )
+            if step == 0:
+                images_for_log.append(torch.cat([images.cpu(), pred.repeat(1, 3, 1, 1).cpu()], dim=-1)[:8])
+
+            if step < 2:
+                author_id = batch['writers'][0].item()
+                pred_author_id = wandb_media_log[f'{wandb_prefix}/predicted_authors'][0][0]
+                text = batch['texts'][0]
+                pred_text = wandb_media_log[f'{wandb_prefix}/predicted_characters'][0][0]
+                images_for_log_w_htr_wid.append(wandb.Image(
+                    torch.cat([images.cpu()[0], pred.repeat(1, 3, 1, 1).cpu()[0]], dim=-1),
+                    caption=f'AID: {author_id}, Pred AID: {pred_author_id}, Text: {text}, Pred Text: {pred_text}')
+                )
 
     grid_nrows = 2
 
@@ -94,17 +107,17 @@ def train():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output_dir", type=str, default='results', help="output directory")
     parser.add_argument("--logging_dir", type=str, default='results', help="logging directory")
-    parser.add_argument("--train_batch_size", type=int, default=1, help="train batch size")
+    parser.add_argument("--train_batch_size", type=int, default=16, help="train batch size")
     parser.add_argument("--eval_batch_size", type=int, default=32, help="eval batch size")
     parser.add_argument("--epochs", type=int, default=10000, help="number of epochs to train the model")
     parser.add_argument("--lr", type=float, default=1e-4, help="learning rate")
     parser.add_argument("--seed", type=int, default=24, help="random seed")
     parser.add_argument('--model_save_interval', type=int, default=5, help="model save interval")
-    parser.add_argument("--eval_epochs", type=int, default=5, help="eval interval")
+    parser.add_argument("--eval_epochs", type=int, default=20, help="eval interval")
     parser.add_argument("--resume_id", type=str, default=None, help="resume from checkpoint")
     parser.add_argument("--vae_config", type=str, default='configs/vae/VAE_64x768.json', help='vae config path')
     parser.add_argument("--htr_path", type=str, default='results/8da9/model_1000', help='htr checkpoint path')
-    parser.add_argument("--writer_id_path", type=str, default='results/b12a/model_2900', help='writerid config path')
+    parser.add_argument("--writer_id_path", type=str, default='results/b12a/model_4000', help='writerid config path')
     parser.add_argument("--report_to", type=str, default="wandb")
     parser.add_argument("--wandb_project_name", type=str, default="emuru_vae", help="wandb project name")
 
@@ -159,6 +172,7 @@ def train():
 
     vae = AutoencoderKL.from_config(config_dict)
     vae.requires_grad_(True)
+    args.total_params = vae.num_parameters(only_trainable=True)
 
     if args.use_ema:
         ema_vae = vae.from_config(config_dict)
@@ -204,11 +218,11 @@ def train():
         wandb_args = {"wandb": {"entity": "fomo_aiisdh", "name": args.run_name}}
         tracker_config = dict(vars(args))
         accelerator.init_trackers(args.wandb_project_name, tracker_config, wandb_args)
+        wandb.watch(vae, log="all", log_freq=1)
 
     num_steps_per_epoch = math.ceil(len(train_loader) / args.gradient_accumulation_steps)
     args.max_train_steps = args.epochs * num_steps_per_epoch
     total_batch_size = (args.train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps)
-    args.total_params = vae.num_parameters(only_trainable=True)
 
     logger.info("***** Running training *****")
     logger.info(f"  Num examples = {len(train_dataset)}. Num steps per epoch = {num_steps_per_epoch}")
@@ -224,8 +238,6 @@ def train():
     if args.resume_id:
         accelerator.load_state()
         accelerator.project_configuration.iteration = train_state.epoch
-
-    wandb.watch(vae, log="all", log_freq=1)
 
     progress_bar = tqdm(range(train_state.global_step, args.max_train_steps),
                         disable=not accelerator.is_local_main_process)
@@ -248,9 +260,15 @@ def train():
                     tgt_mask = batch['tgt_key_mask']
                     tgt_key_padding_mask = batch['tgt_key_padding_mask']
 
-                    posterior = vae.encode(images).latent_dist
+                    if accelerator.num_processes > 1:
+                        posterior = vae.module.encode(images).latent_dist
+                    else:
+                        posterior = vae.encode(images).latent_dist
                     z = posterior.sample()
-                    pred = vae.decode(z).sample
+                    if accelerator.num_processes > 1:
+                        pred = vae.module.decode(z).sample
+                    else:
+                        pred = vae.decode(z).sample
 
                     loss, log_dict, _ = loss_fn(images=targets, reconstructions=pred, posteriors=posterior,
                                                 writers=writers, text_logits_s2s=text_logits_s2s,
@@ -284,29 +302,31 @@ def train():
                 logs['epoch'] = epoch
                 logs.update(log_dict)
 
-                accelerator.log(logs)
+                accelerator.log(logs)  # TODO LOG EACH EPOCH NOT EACH STEP
                 progress_bar.set_postfix(**logs)
 
         train_state.epoch += 1
         if epoch % args.eval_epochs == 0:
-            with torch.no_grad():
-                eval_loss, eval_log_dict = validation(eval_loader, vae, accelerator, weight_dtype, loss_fn,
-                                                      train_state.global_step)
-                lr_scheduler.step(eval_loss)
+            eval_loss = validation(eval_loader, vae, accelerator, loss_fn, weight_dtype, 'eval')
+            lr_scheduler.step(eval_loss)
 
-                if args.use_ema:
-                    ema_vae.store(vae.parameters())
-                    ema_vae.copy_to(vae.parameters())
-                    _ = validation(eval_loader, vae, accelerator, weight_dtype, loss_fn, train_state.global_step, 'ema')
-                    ema_vae.restore(vae.parameters())
+            if args.use_ema:
+                ema_vae.store(vae.parameters())
+                ema_vae.copy_to(vae.parameters())
+                _ = validation(eval_loader, vae, accelerator, loss_fn, weight_dtype, 'ema')
+                ema_vae.restore(vae.parameters())
 
+            accelerator.wait_for_everyone()
             if accelerator.is_main_process:
                 logger.info(f"Epoch {epoch} - LOSS: {eval_loss}")
                 accelerator.save_state()
 
         if accelerator.is_main_process and epoch % args.model_save_interval == 0:
-            vae.save_pretrained(args.output_dir / f"model_{epoch:04d}")
+            vae_model = accelerator.unwrap_model(vae)
+            vae_model.save_pretrained(args.output_dir / f"model_{epoch:04d}")
+            del vae_model
 
+    accelerator.wait_for_everyone()
     if accelerator.is_main_process:
         vae = accelerator.unwrap_model(vae)
         vae.save_pretrained(args.output_dir)
