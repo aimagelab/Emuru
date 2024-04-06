@@ -11,36 +11,20 @@
 #SBATCH --time=1-00:00:00
 #SBATCH --array=0-4%1
 
-source ~/anaconda3/etc/profile.d/conda.sh
-
 cd /work/FoMo_AIISDH/fquattrini/emuru || exit
-source activate emuru
+
+. /usr/local/anaconda3/etc/profile.d/conda.sh
+conda activate emuru
 
 export SCRIPT=train_vae.py
 export OMP_NUM_THREADS=16
 
-
-if [[ "$SLURM_ARRAY_TASK_ID" == "0" ]]; then
-  export SCRIPT_ARGS=" \
-      --mixed_precision bf16 \
-      --output_dir /work/FoMo_AIISDH/scascianelli/2024_emuru/results \
-      --logging_dir /work/FoMo_AIISDH/scascianelli/2024_emuru/results \
-      --train_batch_size 32 \
-      --htr_path /work/FoMo_AIISDH/scascianelli/2024_emuru/results/8da9/model_1000 \
-      --writer_id_path /work/FoMo_AIISDH/scascianelli/2024_emuru/results/b12a/model_2900 \
-      --run_id 1b7f \
-      "
-  accelerate launch --num_processes 4 $SCRIPT "$SCRIPT_ARGS"
-fi
-
-# all other cases
-if [[ "$SLURM_ARRAY_TASK_ID" != "0" ]]; then
-  export SCRIPT_ARGS=" \
-    --mixed_precision bf16 \
+export SCRIPT_ARGS=" \
     --output_dir /work/FoMo_AIISDH/scascianelli/2024_emuru/results \
     --logging_dir /work/FoMo_AIISDH/scascianelli/2024_emuru/results \
-    --train_batch_size 32 \
+    --train_batch_size 16 \
+    --htr_path /work/FoMo_AIISDH/scascianelli/2024_emuru/results/8da9/model_1000 \
+    --writer_id_path /work/FoMo_AIISDH/scascianelli/2024_emuru/results/b12a/model_4000 \
     --resume_id 1b7f \
     "
-  accelerate launch --num_processes 4 $SCRIPT "$SCRIPT_ARGS"
-fi
+accelerate launch --num_processes 4 $SCRIPT "$SCRIPT_ARGS"
