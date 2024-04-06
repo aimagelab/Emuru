@@ -13,6 +13,7 @@ import torch.utils.checkpoint
 from diffusers.training_utils import EMAModel
 
 from accelerate import Accelerator
+from accelerate.utils import broadcast
 from accelerate.logging import get_logger
 from accelerate.utils import ProjectConfiguration, set_seed
 
@@ -34,7 +35,8 @@ logger = get_logger(__name__)
 
 @torch.no_grad()
 def validation(eval_loader, writer_id, accelerator, weight_dtype, loss_fn, accuracy_fn, wandb_prefix="eval"):
-    writer_id.eval()
+    writer_id_model = accelerator.unwrap_model(writer_id)
+    writer_id_model.eval()
     eval_loss = 0.
     images_for_log = []
 
@@ -42,14 +44,10 @@ def validation(eval_loader, writer_id, accelerator, weight_dtype, loss_fn, accur
         images = batch['images_bw'].to(weight_dtype)
         authors_id = batch['writers']
 
-        output = writer_id(images)
+        output = writer_id_model(images)
 
         loss = loss_fn(output, authors_id)
         predicted_authors = torch.argmax(output, dim=1)
-
-        if accelerator.use_distributed:
-            predicted_authors, authors_id = accelerator.gather_for_metrics((predicted_authors, authors_id))
-            loss = accelerator.gather(loss).mean()
 
         accuracy_fn.add_batch(predictions=predicted_authors.int(), references=authors_id.int())
         eval_loss += loss.item()
@@ -60,13 +58,13 @@ def validation(eval_loader, writer_id, accelerator, weight_dtype, loss_fn, accur
 
     accuracy_value = accuracy_fn.compute()['accuracy']
 
-    if accelerator.is_main_process:
-        accelerator.log({
-            f"{wandb_prefix}/loss": eval_loss / len(eval_loader),
-            f"{wandb_prefix}/accuracy": accuracy_value / len(eval_loader),
-            f"{wandb_prefix}/images": images_for_log,
-        })
+    accelerator.log({
+        f"{wandb_prefix}/loss": eval_loss / len(eval_loader),
+        f"{wandb_prefix}/accuracy": accuracy_value / len(eval_loader),
+        f"{wandb_prefix}/images": images_for_log,
+    })
 
+    del writer_id_model
     torch.cuda.empty_cache()
     return accuracy_value
 
@@ -81,6 +79,7 @@ def train():
     parser.add_argument("--lr", type=float, default=1e-4, help="learning rate")
     parser.add_argument("--seed", type=int, default=24, help="random seed")
     parser.add_argument('--model_save_interval', type=int, default=5, help="model save interval")
+    parser.add_argument('--wandb_log_interval_steps', type=int, default=25, help="model save interval")
     parser.add_argument("--eval_epochs", type=int, default=25, help="eval interval")
     parser.add_argument("--resume_id", type=str, default=None, help="resume from checkpoint")
     parser.add_argument("--run_id", type=str, default=uuid.uuid4().hex[:4], help="uuid of the run")
@@ -153,9 +152,11 @@ def train():
         eps=args.adam_epsilon)
 
     train_dataset = OnlineFontSquare('files/font_square/fonts', 'files/font_square/backgrounds',
-                                     TextSampler(8, 32, (4, 7)), length=args.num_samples_per_epoch)
+                                     text_sampler=TextSampler(8, 32, (4, 7), exponent=0.5),
+                                     length=args.num_samples_per_epoch)
     eval_dataset = OnlineFontSquare('files/font_square/fonts', 'files/font_square/backgrounds',
-                                    TextSampler(8, 32, (4, 7)), length=1024)
+                                    text_sampler=TextSampler(8, 32, (4, 7), exponent=0.5),
+                                    length=args.num_samples_per_epoch)
 
     train_loader = DataLoader(train_dataset, batch_size=args.train_batch_size, shuffle=True,
                               collate_fn=collate_fn, num_workers=4, persistent_workers=True)
@@ -226,7 +227,8 @@ def train():
 
                 loss = ce_loss(output, authors_id)
                 predicted_authors = torch.argmax(output, dim=1)
-                accuracy_value = accuracy.compute(predictions=predicted_authors.int(), references=authors_id.int())['accuracy']
+                accuracy_value = accuracy.compute(predictions=predicted_authors.int(), references=authors_id.int())[
+                    'accuracy']
 
                 if not torch.isfinite(loss):
                     logger.info("\nWARNING: non-finite loss")
@@ -261,15 +263,16 @@ def train():
             logs["train/accuracy"] = accuracy_value
             logs['epoch'] = epoch
 
-            accelerator.log(logs)
             progress_bar.set_postfix(**logs)
+            if train_state.global_step % args.wandb_log_interval_steps == 0:
+                accelerator.log(logs)
 
         train_state.epoch += 1
 
-        if epoch % args.eval_epochs == 0:
+        if epoch % args.eval_epochs == 0 and accelerator.is_main_process:
             with torch.no_grad():
-                eval_accuracy = validation(eval_loader, writer_id, accelerator, weight_dtype, ce_loss, accuracy)
-                lr_scheduler.step(eval_accuracy)
+                eval_accuracy = validation(eval_loader, writer_id, accelerator, weight_dtype, ce_loss, accuracy, 'eval')
+                eval_accuracy = broadcast(torch.tensor(eval_accuracy, device=accelerator.device), from_process=0)
 
                 if args.use_ema:
                     ema_writer_id.store(writer_id.parameters())
@@ -277,16 +280,19 @@ def train():
                     _ = validation(eval_loader, writer_id, accelerator, weight_dtype, ce_loss, accuracy, 'ema')
                     ema_writer_id.restore(writer_id.parameters())
 
-            accelerator.wait_for_everyone()
-            if accelerator.is_main_process:
-                logger.info(f"Epoch {epoch} - Eval accuracy: {eval_accuracy}")
-                accelerator.save_state()
+            logger.info(f"Epoch {epoch} - Eval accuracy: {eval_accuracy}")
+            accelerator.save_state()
 
         if accelerator.is_main_process and epoch % args.model_save_interval == 0:
-            writer_id.save_pretrained(args.output_dir / f"model_{epoch:04d}")
+            writer_id_to_save = accelerator.unwrap_model(writer_id)
+            writer_id_to_save.save_pretrained(args.output_dir / f"model_{epoch:04d}")
+            del writer_id_to_save
 
-    if accelerator.is_main_process:
         accelerator.wait_for_everyone()
+        lr_scheduler.step(eval_accuracy)
+
+    accelerator.wait_for_everyone()
+    if accelerator.is_main_process:
         writer_id = accelerator.unwrap_model(writer_id)
         writer_id.save_pretrained(args.output_dir)
 

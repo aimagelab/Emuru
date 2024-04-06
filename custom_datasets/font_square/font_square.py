@@ -2,6 +2,7 @@ from torch.utils.data import Dataset
 from . import font_transforms as FT
 from torchvision import transforms as T
 from pathlib import Path
+import numpy as np
 import nltk
 import torch
 from einops import rearrange
@@ -9,6 +10,8 @@ from torch.nn.utils.rnn import pad_sequence
 import random
 import msgpack
 from pathlib import Path
+from collections import Counter
+from itertools import pairwise
 
 from ..alphabet import Alphabet
 from ..constants import (
@@ -147,12 +150,13 @@ class HFDataCollector:
 
 
 class TextSampler:
-    def __init__(self, min_len: int, max_len: int, count, charset=None,
+    def __init__(self, min_len: int, max_len: int, count, charset=None, exponent=1,
                  words_dict_path='files/font_square/words_dict.msgpack'):
 
         self.min_len = min_len
         self.max_len = max_len
         self.charset = charset
+        self.exponent = exponent
 
         if isinstance(count, int):
             self.min_count = count
@@ -171,7 +175,7 @@ class TextSampler:
                 words_frequencies_dict = msgpack.unpackb(packed_data)
             self.words = list(words_frequencies_dict.keys())
             assert len(self.words) == 103411, 'Words count mismatch. Expected 103411 words.'
-            self.words_frequencies = torch.tensor(list(words_frequencies_dict.values()), dtype=torch.float)
+            # self.words_frequencies = torch.tensor(list(words_frequencies_dict.values()), dtype=torch.float)
         else:
             words = nltk.corpus.abc.words()
             words += nltk.corpus.brown.words()
@@ -185,17 +189,34 @@ class TextSampler:
 
             words = list(words)
             words_unique = list(set(words))
-            words_frequencies_dict = {word: words.count(word) for word in words_unique}
+            words_count = Counter(words_unique)
+            words_frequencies = {word: count for word, count in words_count.items()}
             with open(words_dict_path, 'wb') as file:
-                packed_data = msgpack.packb(words_frequencies_dict)
+                packed_data = msgpack.packb(words_frequencies)
                 file.write(packed_data)
 
             self.words = words_unique
-            self.words_frequencies = torch.tensor(list(words_frequencies_dict.values()), dtype=torch.float)
+            # self.words_frequencies = torch.tensor(list(words_frequencies.values()), dtype=torch.float)
+
+        unigram_long_text = ''.join(self.words)
+        unigram_counts = Counter(unigram_long_text)
+        self.unigram_counts = {k: len(unigram_long_text) / v ** self.exponent for k, v in unigram_counts.items()}
+
+        bigram_long_text = ' ' + ' '.join(self.words) + ' '
+        bigram_long_text = [''.join(pair) for pair in pairwise(bigram_long_text)]
+        bigram_counts = Counter(bigram_long_text)
+        self.bigram_counts = {k: len(bigram_long_text) / v ** self.exponent for k, v in bigram_counts.items()}
+        self.words_weights = torch.tensor([self.eval_word(word) for word in self.words], dtype=torch.float)
+
+    def eval_word(self, word):
+        bigrams = list(pairwise(f' {word} '))
+        unigram_score = sum([self.unigram_counts[c] for c in word]) / len(word)
+        bigram_score = sum([self.bigram_counts[''.join(b)] for b in bigrams]) / len(bigrams)
+        return (unigram_score + bigram_score) / 2
 
     def __call__(self):
         words_count = random.randint(self.min_count, self.max_count)
-        words_indexes = torch.multinomial(self.words_frequencies, words_count, replacement=True)
+        words_indexes = torch.multinomial(self.words_weights, words_count, replacement=True)
         res = [self.words[i] for i in words_indexes]
         txt = ' '.join(res)
 

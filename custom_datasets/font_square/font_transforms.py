@@ -110,7 +110,7 @@ class RandomWarping:
         grid = grid.reshape(1, h, w, 2)
         img = img.unsqueeze(0).type(grid.dtype)
         sample['img'] = torch.nn.functional.grid_sample(img, grid, mode='nearest', padding_mode='border',
-                                                        align_corners=False).squeeze(0)
+                                                        align_corners=False).squeeze(0).float()
         return sample
 
 
@@ -332,12 +332,14 @@ class TimedCompose:
     def __init__(self, transforms: Sequence):
         self.transforms = transforms
         self.times = defaultdict(list)
+        self.avg_times = defaultdict(list)
 
     def __call__(self, sample):
         for t in self.transforms:
             start = time.time()
             sample = t(sample)
             self.times[t.__class__.__name__].append(time.time() - start)
+            self.avg_times[t.__class__.__name__] = np.mean(self.times[t.__class__.__name__])
         return sample
 
     def print_times(self):

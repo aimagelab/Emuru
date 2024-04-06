@@ -15,6 +15,7 @@ from diffusers.training_utils import EMAModel
 from accelerate import Accelerator
 from accelerate.logging import get_logger
 from accelerate.utils import ProjectConfiguration, set_seed
+from accelerate.utils import broadcast
 
 from transformers.optimization import get_scheduler
 import evaluate
@@ -42,38 +43,33 @@ def validation(eval_loader, htr, accelerator, weight_dtype, loss_fn, cer_fn, wan
     images_for_log = []
 
     for step, batch in enumerate(eval_loader):
-        images = batch['images_bw'].to(weight_dtype)
-        text_logits_s2s = batch['text_logits_s2s']
-        tgt_mask = batch['tgt_key_mask']
-        tgt_key_padding_mask = batch['tgt_key_padding_mask']
+        with accelerator.autocast():
+            images = batch['images_bw'].to(weight_dtype)
+            text_logits_s2s = batch['text_logits_s2s']
+            tgt_mask = batch['tgt_key_mask']
+            tgt_key_padding_mask = batch['tgt_key_padding_mask']
 
-        output = htr(images, text_logits_s2s[:, :-1], tgt_mask, tgt_key_padding_mask[:, :-1])
-        loss = loss_fn(output, text_logits_s2s[:, 1:])
+            output = htr_model(images, text_logits_s2s[:, :-1], tgt_mask, tgt_key_padding_mask[:, :-1])
+            loss = loss_fn(output, text_logits_s2s[:, 1:])
 
-        predicted_logits = torch.argmax(output, dim=2)
-        predicted_characters = eval_loader.dataset.alphabet.decode(predicted_logits, [END_OF_SEQUENCE])
-        correct_characters = eval_loader.dataset.alphabet.decode(text_logits_s2s[:, 1:], [END_OF_SEQUENCE])
+            predicted_logits = torch.argmax(output, dim=2)
+            predicted_characters = eval_loader.dataset.alphabet.decode(predicted_logits, [END_OF_SEQUENCE])
+            correct_characters = eval_loader.dataset.alphabet.decode(text_logits_s2s[:, 1:], [END_OF_SEQUENCE])
 
-        if accelerator.use_distributed:
-            accelerator.gather_for_metrics((predicted_characters, correct_characters))
-            accelerator.gather(loss).mean()
+            cer_fn.add_batch(predictions=predicted_characters, references=correct_characters)
+            eval_loss += loss.item()
 
-        cer_fn.add_batch(predictions=predicted_characters, references=correct_characters)
-        eval_loss += loss.item()
-
-        if step < 4:
-            images_for_log.append(wandb.Image(images[0], caption=predicted_characters[0]))
+            if step < 4:
+                images_for_log.append(wandb.Image(images[0], caption=predicted_characters[0]))
 
     cer_value = cer_fn.compute()
+    accelerator.log({
+        f"{wandb_prefix}/loss": eval_loss / len(eval_loader),
+        f"{wandb_prefix}/cer": cer_value / len(eval_loader),
+        f"{wandb_prefix}/images": images_for_log,
+    })
 
-    if accelerator.is_main_process:
-        accelerator.log({
-            f"{wandb_prefix}/loss": eval_loss / len(eval_loader),
-            f"{wandb_prefix}/cer": cer_value / len(eval_loader),
-            f"{wandb_prefix}/images": images_for_log,
-        })
-
-    del htr
+    del htr_model
     torch.cuda.empty_cache()
     return cer_value
 
@@ -88,6 +84,7 @@ def train():
     parser.add_argument("--lr", type=float, default=1e-4, help="learning rate")
     parser.add_argument("--seed", type=int, default=24, help="random seed")
     parser.add_argument('--model_save_interval', type=int, default=5, help="model save interval")
+    parser.add_argument('--wandb_log_interval_steps', type=int, default=25, help="model save interval")
     parser.add_argument("--eval_epochs", type=int, default=5, help="eval interval")
     parser.add_argument("--resume_id", type=str, default=None, help="resume from checkpoint")
     parser.add_argument("--htr_config", type=str, default='configs/htr/HTR_64x768.json', help='config path')
@@ -159,9 +156,11 @@ def train():
         eps=args.adam_epsilon)
 
     train_dataset = OnlineFontSquare('files/font_square/fonts', 'files/font_square/backgrounds',
-                                     TextSampler(8, 32, (4, 7)), length=args.num_samples_per_epoch)
+                                     text_sampler=TextSampler(8, 32, (4, 7), exponent=0.5),
+                                     length=args.num_samples_per_epoch)
     eval_dataset = OnlineFontSquare('files/font_square/fonts', 'files/font_square/backgrounds',
-                                    TextSampler(8, 32, (4, 7)), length=1024)
+                                    text_sampler=TextSampler(8, 32, (4, 7), exponent=0.5),
+                                    length=args.num_samples_per_epoch)
 
     train_loader = DataLoader(train_dataset, batch_size=args.train_batch_size, shuffle=True,
                               collate_fn=collate_fn, num_workers=4, persistent_workers=True)
@@ -187,6 +186,7 @@ def train():
         wandb_args = {"wandb": {"entity": "fomo_aiisdh", "name": args.run_name}}
         tracker_config = dict(vars(args))
         accelerator.init_trackers(args.wandb_project_name, tracker_config, wandb_args)
+        wandb.watch(htr, log="all", log_freq=1)
 
     num_steps_per_epoch = math.ceil(len(train_loader) / args.gradient_accumulation_steps)
     args.max_train_steps = args.epochs * num_steps_per_epoch
@@ -208,7 +208,6 @@ def train():
         accelerator.load_state()
         accelerator.project_configuration.iteration = train_state.epoch
 
-    wandb.watch(htr, log="all", log_freq=1)
     smooth_ce_loss = SmoothCrossEntropyLoss(tgt_pad_idx=train_dataset.alphabet.pad)
     cer = evaluate.load('cer')
     noisy_teacher = NoisyTeacherForcing(len(train_dataset.alphabet), train_dataset.alphabet.num_extra_tokens, 0.1)
@@ -225,63 +224,65 @@ def train():
 
         for step, batch in enumerate(train_loader):
 
-            with accelerator.accumulate(htr):
-                images = batch['images_bw'].to(weight_dtype)
-                text_logits_s2s = batch['text_logits_s2s']
-                text_logits_s2s_noisy = noisy_teacher(text_logits_s2s, batch['unpadded_texts_len'])
-                tgt_mask = batch['tgt_key_mask']
-                tgt_key_padding_mask = batch['tgt_key_padding_mask']
+            with accelerator.autocast():
+                with accelerator.accumulate(htr):
+                    images = batch['images_bw'].to(weight_dtype)
+                    text_logits_s2s = batch['text_logits_s2s']
+                    text_logits_s2s_noisy = noisy_teacher(text_logits_s2s, batch['unpadded_texts_len'])
+                    tgt_mask = batch['tgt_key_mask']
+                    tgt_key_padding_mask = batch['tgt_key_padding_mask']
 
-                output = htr(images, text_logits_s2s_noisy[:, :-1], tgt_mask, tgt_key_padding_mask[:, :-1])
+                    output = htr(images, text_logits_s2s_noisy[:, :-1], tgt_mask, tgt_key_padding_mask[:, :-1])
 
-                loss = smooth_ce_loss(output, text_logits_s2s[:, 1:])
+                    loss = smooth_ce_loss(output, text_logits_s2s[:, 1:])
 
-                predicted_logits = torch.argmax(output, dim=2)
-                predicted_characters = train_dataset.alphabet.decode(predicted_logits, [END_OF_SEQUENCE])
-                correct_characters = train_dataset.alphabet.decode(text_logits_s2s[:, 1:], [END_OF_SEQUENCE])
-                cer_value = cer.compute(predictions=predicted_characters, references=correct_characters)
+                    predicted_logits = torch.argmax(output, dim=2)
+                    predicted_characters = train_dataset.alphabet.decode(predicted_logits, [END_OF_SEQUENCE])
+                    correct_characters = train_dataset.alphabet.decode(text_logits_s2s[:, 1:], [END_OF_SEQUENCE])
+                    cer_value = cer.compute(predictions=predicted_characters, references=correct_characters)
 
-                if not torch.isfinite(loss):
-                    logger.info("\nWARNING: non-finite loss")
+                    if not torch.isfinite(loss):
+                        logger.info("\nWARNING: non-finite loss")
+                        optimizer.zero_grad()
+                        continue
+
+                    avg_loss = accelerator.gather(loss).mean()
+                    avg_cer = accelerator.gather(torch.tensor(cer_value, device=accelerator.device)).mean()
+                    train_loss += avg_loss.item() / args.gradient_accumulation_steps
+                    train_cer += avg_cer.item() / args.gradient_accumulation_steps
+                    accelerator.backward(loss)
+
+                    optimizer.step()
                     optimizer.zero_grad()
-                    continue
 
-                avg_loss = accelerator.gather(loss).mean()
-                avg_cer = accelerator.gather(torch.tensor(cer_value)).mean()
-                train_loss += avg_loss.item() / args.gradient_accumulation_steps
-                train_cer += avg_cer.item() / args.gradient_accumulation_steps
-                accelerator.backward(loss)
+                logs = {}
+                if accelerator.sync_gradients:
+                    progress_bar.update(1)
+                    if args.use_ema:
+                        ema_htr.to(htr.device)
+                        ema_htr.step(htr.parameters())
+                    train_state.global_step += 1
+                    logs["global_step"] = train_state.global_step
+                    logs['train/loss'] = train_loss
+                    logs['train/cer'] = train_cer
+                    train_loss = 0.0
+                    train_cer = 0.0
 
-                optimizer.step()
-                optimizer.zero_grad()
+                logs["lr"] = optimizer.param_groups[0]['lr']
+                logs["train/smooth_ce"] = loss.detach().item()
+                logs["train/cer"] = cer_value
+                logs['epoch'] = epoch
 
-            logs = {}
-            if accelerator.sync_gradients:
-                progress_bar.update(1)
-                if args.use_ema:
-                    ema_htr.to(htr.device)
-                    ema_htr.step(htr.parameters())
-                train_state.global_step += 1
-                logs["global_step"] = train_state.global_step
-                logs['train/loss'] = train_loss
-                logs['train/cer'] = train_cer
-                train_loss = 0.0
-                train_cer = 0.0
-
-            logs["lr"] = optimizer.param_groups[0]['lr']
-            logs["train/smooth_ce"] = loss.detach().item()
-            logs["train/cer"] = cer_value
-            logs['epoch'] = epoch
-
-            accelerator.log(logs)
-            progress_bar.set_postfix(**logs)
+                progress_bar.set_postfix(**logs)
+                if train_state.global_step % args.wandb_log_interval_steps == 0:
+                    accelerator.log(logs)
 
         train_state.epoch += 1
 
-        if epoch % args.eval_epochs == 0:
+        if epoch % args.eval_epochs == 0 and accelerator.is_main_process:
             with torch.no_grad():
-                eval_cer = validation(eval_loader, htr, accelerator, weight_dtype, smooth_ce_loss, cer)
-                lr_scheduler.step(cer_value)
+                eval_cer = validation(eval_loader, htr, accelerator, weight_dtype, smooth_ce_loss, cer, 'eval')
+                eval_cer = broadcast(torch.tensor(eval_cer, device=accelerator.device), from_process=0)
 
                 if args.use_ema:
                     ema_htr.store(htr.parameters())
@@ -289,13 +290,18 @@ def train():
                     _ = validation(eval_loader, htr, accelerator, weight_dtype, smooth_ce_loss, cer, 'ema')
                     ema_htr.restore(htr.parameters())
 
-            if accelerator.is_main_process:
-                logger.info(f"Epoch {epoch} - Eval CER: {eval_cer}")
-                accelerator.save_state()
+            logger.info(f"Epoch {epoch} - Eval CER: {eval_cer}")
+            accelerator.save_state()
 
         if accelerator.is_main_process and epoch % args.model_save_interval == 0:
-            htr.save_pretrained(args.output_dir / f"model_{epoch:04d}")
+            htr_to_save = accelerator.unwrap_model(htr)
+            htr_to_save.save_pretrained(args.output_dir / f"model_{epoch:04d}")
+            del htr_to_save
 
+        accelerator.wait_for_everyone()
+        lr_scheduler.step(eval_cer)
+
+    accelerator.wait_for_everyone()
     if accelerator.is_main_process:
         htr = accelerator.unwrap_model(htr)
         htr.save_pretrained(args.output_dir)

@@ -15,6 +15,7 @@ import torchvision
 from accelerate import Accelerator
 from accelerate.logging import get_logger
 from accelerate.utils import ProjectConfiguration, set_seed
+from accelerate.utils import broadcast
 
 from models.autoencoder_kl import AutoencoderKL
 from transformers.optimization import get_scheduler
@@ -34,7 +35,8 @@ logger = get_logger(__name__)
 
 @torch.no_grad()
 def validation(eval_loader, vae, accelerator, loss_fn, weight_dtype, wandb_prefix="eval"):
-    vae.eval()
+    vae_model = accelerator.unwrap_model(vae)
+    vae_model.eval()
     eval_loss = 0.
     images_for_log = []
     images_for_log_w_htr_wid = []
@@ -50,27 +52,15 @@ def validation(eval_loader, vae, accelerator, loss_fn, weight_dtype, wandb_prefi
             tgt_mask = batch['tgt_key_mask']
             tgt_key_padding_mask = batch['tgt_key_padding_mask']
 
-            if accelerator.num_processes > 1:
-                posterior = vae.module.encode(images).latent_dist
-            else:
-                posterior = vae.encode(images).latent_dist
+            posterior = vae_model.encode(images).latent_dist
             z = posterior.sample()
-            if accelerator.num_processes > 1:
-                pred = vae.module.decode(z).sample
-            else:
-                pred = vae.decode(z).sample
+            pred = vae_model.decode(z).sample
 
             loss, log_dict, wandb_media_log = loss_fn(images=targets, reconstructions=pred, posteriors=posterior,
                                                       writers=writers, text_logits_s2s=text_logits_s2s,
                                                       text_logits_s2s_length=text_logits_s2s_unpadded_len,
                                                       tgt_key_padding_mask=tgt_key_padding_mask, source_mask=tgt_mask,
                                                       split=wandb_prefix)
-
-            if accelerator.use_distributed:
-                logger.info(f"Gathering loss across all processes... {accelerator.device}: {loss}, {log_dict}")
-                loss = accelerator.gather(loss).mean()
-                log_dict = accelerator.gather_for_metrics(log_dict)
-                logger.info(f"Done gathering loss across all processes... {accelerator.device}: {loss}, {log_dict}")
 
             eval_loss += loss.item()
 
@@ -88,17 +78,16 @@ def validation(eval_loader, vae, accelerator, loss_fn, weight_dtype, wandb_prefi
                 )
 
     grid_nrows = 2
+    accelerator.log({
+        **log_dict,
+        f"{wandb_prefix}/loss": eval_loss / len(eval_loader),
+        "Original (left), Reconstruction (right)":
+            [wandb.Image(torchvision.utils.make_grid(image, nrow=grid_nrows, normalize=True, value_range=(-1, 1)))
+             for _, image in enumerate(images_for_log)],
+        "Image, HTR and Writer ID": images_for_log_w_htr_wid
+    })
 
-    if accelerator.is_main_process:
-        accelerator.log({
-            **log_dict,
-            f"{wandb_prefix}/loss": eval_loss / len(eval_loader),
-            "Original (left), Reconstruction (right)":
-                [wandb.Image(torchvision.utils.make_grid(image, nrow=grid_nrows, normalize=True, value_range=(-1, 1)))
-                 for _, image in enumerate(images_for_log)],
-            "Image, HTR and Writer ID": images_for_log_w_htr_wid
-        })
-
+    del vae_model
     torch.cuda.empty_cache()
     return eval_loss / len(eval_loader)
 
@@ -113,6 +102,7 @@ def train():
     parser.add_argument("--lr", type=float, default=1e-4, help="learning rate")
     parser.add_argument("--seed", type=int, default=24, help="random seed")
     parser.add_argument('--model_save_interval', type=int, default=5, help="model save interval")
+    parser.add_argument('--wandb_log_interval_steps', type=int, default=25, help="model save interval")
     parser.add_argument("--eval_epochs", type=int, default=20, help="eval interval")
     parser.add_argument("--resume_id", type=str, default=None, help="resume from checkpoint")
     parser.add_argument("--vae_config", type=str, default='configs/vae/VAE_64x768.json', help='vae config path')
@@ -187,9 +177,11 @@ def train():
         eps=args.adam_epsilon)
 
     train_dataset = OnlineFontSquare('files/font_square/fonts', 'files/font_square/backgrounds',
-                                     TextSampler(8, 32, (4, 7)), length=args.num_samples_per_epoch)
+                                     text_sampler=TextSampler(8, 32, (4, 7), exponent=0.5),
+                                     length=args.num_samples_per_epoch)
     eval_dataset = OnlineFontSquare('files/font_square/fonts', 'files/font_square/backgrounds',
-                                    TextSampler(8, 32, (4, 7)), length=1024)
+                                    text_sampler=TextSampler(8, 32, (4, 7), exponent=0.5),
+                                    length=args.num_samples_per_epoch)
 
     train_loader = DataLoader(train_dataset, batch_size=args.train_batch_size, shuffle=True,
                               collate_fn=collate_fn, num_workers=4, persistent_workers=True)
@@ -302,13 +294,14 @@ def train():
                 logs['epoch'] = epoch
                 logs.update(log_dict)
 
-                accelerator.log(logs)  # TODO LOG EACH EPOCH NOT EACH STEP
                 progress_bar.set_postfix(**logs)
+                if train_state.global_step % args.wandb_log_interval_steps == 0:
+                    accelerator.log(logs)
 
         train_state.epoch += 1
-        if epoch % args.eval_epochs == 0:
+        if epoch % args.eval_epochs == 0 and accelerator.is_main_process:
             eval_loss = validation(eval_loader, vae, accelerator, loss_fn, weight_dtype, 'eval')
-            lr_scheduler.step(eval_loss)
+            eval_loss = broadcast(torch.tensor(eval_loss, device=accelerator.device), from_process=0)
 
             if args.use_ema:
                 ema_vae.store(vae.parameters())
@@ -316,15 +309,16 @@ def train():
                 _ = validation(eval_loader, vae, accelerator, loss_fn, weight_dtype, 'ema')
                 ema_vae.restore(vae.parameters())
 
-            accelerator.wait_for_everyone()
-            if accelerator.is_main_process:
-                logger.info(f"Epoch {epoch} - LOSS: {eval_loss}")
-                accelerator.save_state()
+            logger.info(f"Epoch {epoch} - Eval loss: {eval_loss}")
+            accelerator.save_state()
 
         if accelerator.is_main_process and epoch % args.model_save_interval == 0:
             vae_model = accelerator.unwrap_model(vae)
             vae_model.save_pretrained(args.output_dir / f"model_{epoch:04d}")
             del vae_model
+
+        accelerator.wait_for_everyone()
+        lr_scheduler.step(eval_loss)
 
     accelerator.wait_for_everyone()
     if accelerator.is_main_process:

@@ -14,6 +14,7 @@ class Alphabet:
         self.sos = START_OF_SEQUENCE
         self.eos = END_OF_SEQUENCE
         self.num_extra_tokens = 3
+        self.extra_tokens = [self.pad, self.sos, self.eos]
 
         charset_types = [charset]
 
@@ -35,10 +36,11 @@ class Alphabet:
             out.append(self.char2idx[i])
         return torch.LongTensor(out)
 
-    def _decode(self, x_in):
+    def _decode(self, x_in, extra_tokens):
         out = []
         for i in x_in:
-            out.append(self.idx2char[int(i)])
+            if i not in extra_tokens:
+                out.append(self.idx2char[int(i)])
         return "".join(out)
 
     def decode(self, x_in, stopping_logits: list):
@@ -52,5 +54,5 @@ class Alphabet:
                     stop = torch.LongTensor([len(b)])
                 stops.append(stop[0])
             end_idx = torch.min(torch.stack(stops))
-            text.append(self._decode(b[:end_idx]))
+            text.append(self._decode(b[:end_idx], self.extra_tokens))
         return text
