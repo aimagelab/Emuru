@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 from models.htr import HTR
-from models.writer_id import WriterID
+from models.writer_id_old import WriterID
 from models.smooth_ce import SmoothCrossEntropyLoss
 from models.teacher_forcing import NoisyTeacherForcing
 import evaluate
