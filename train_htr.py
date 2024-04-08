@@ -279,6 +279,7 @@ def train():
 
         train_state.epoch += 1
 
+        print(f'{accelerator.device} before eval')
         if epoch % args.eval_epochs == 0 and accelerator.is_main_process:
             with torch.no_grad():
                 eval_cer = validation(eval_loader, htr, accelerator, weight_dtype, smooth_ce_loss, cer, 'eval')
@@ -293,12 +294,14 @@ def train():
             logger.info(f"Epoch {epoch} - Eval CER: {eval_cer}")
             accelerator.save_state()
 
+        print(f'{accelerator.device} waiting for everyone')
+        accelerator.wait_for_everyone()
+        print(f'{accelerator.device} continuing')
         if accelerator.is_main_process and epoch % args.model_save_interval == 0:
             htr_to_save = accelerator.unwrap_model(htr)
             htr_to_save.save_pretrained(args.output_dir / f"model_{epoch:04d}")
             del htr_to_save
 
-        accelerator.wait_for_everyone()
         lr_scheduler.step(eval_cer)
 
     accelerator.wait_for_everyone()
