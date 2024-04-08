@@ -30,6 +30,35 @@ from diffusers.utils import is_wandb_available
 import json
 from PIL import Image
 from torchvision.utils import save_image
+from torchvision import transforms
+from custom_datasets import OnlineFontSquare, TextSampler, collate_fn
+
+import argparse
+import logging
+import wandb
+from pathlib import Path
+import math
+from tqdm.auto import tqdm
+import uuid
+import json
+
+import torch
+from torch.utils.data import DataLoader
+import torch.utils.checkpoint
+import torchvision
+
+from accelerate import Accelerator
+from accelerate.logging import get_logger
+from accelerate.utils import ProjectConfiguration, set_seed
+from accelerate.utils import broadcast
+
+from models.autoencoder_kl import AutoencoderKL
+from transformers.optimization import get_scheduler
+from diffusers.training_utils import EMAModel
+
+from utils import TrainState
+from custom_datasets import OnlineFontSquare, TextSampler, collate_fn
+from models.autoencoder_loss import AutoencoderLoss
 
 # from models.vae import VAEModel
 # from models.configuration_vae import VAEConfig
@@ -44,14 +73,23 @@ logger = get_logger(__name__)
 
 @torch.inference_mode()
 def main():
-    vae = AutoencoderKL.from_pretrained('files/checkpoints/ca5f')
+    vae = AutoencoderKL.from_pretrained('/home/fquattrini/emuru/results/228a/model_0500')
 
-    img = Image.open('test.png')
+    img = Image.open(r'/home/fquattrini/Teddy/files/iam/168/test_168_0000.png').convert('RGB')
+    img = img.resize((img.size[0] * 64 // img.size[1], 64))
     img = transforms.ToTensor()(img).unsqueeze(0)
-    img = img * 2 - 1
-    posterior = vae.encode(img).latent_dist
-    z = posterior.sample()
+    img = transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))(img)
 
+    eval_dataset = OnlineFontSquare('files/font_square/fonts', 'files/font_square/backgrounds',
+                                     text_sampler=TextSampler(8, 32, (4, 7), exponent=0.5))
+    eval_loader = DataLoader(eval_dataset, batch_size=4, shuffle=False,
+                             collate_fn=collate_fn, num_workers=4, persistent_workers=True)
+
+    batch = next(eval_loader.__iter__())
+    images = batch['images']
+
+    posterior = vae.encode(images).latent_dist
+    z = posterior.sample()
     # z = torch.randn(1, 1, 8, 64)
     pred = vae.decoder(z)
     save_image(pred[0], 'test_recon.png')
