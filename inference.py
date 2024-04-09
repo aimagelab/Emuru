@@ -78,22 +78,12 @@ def main():
     img = Image.open(r'/home/fquattrini/Teddy/files/iam/168/test_168_0000.png').convert('RGB')
     img = img.resize((img.size[0] * 64 // img.size[1], 64))
     img = transforms.ToTensor()(img).unsqueeze(0)
-    img = transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))(img)
-
-    eval_dataset = OnlineFontSquare('files/font_square/fonts', 'files/font_square/backgrounds',
-                                     text_sampler=TextSampler(8, 32, (4, 7), exponent=0.5))
-    eval_loader = DataLoader(eval_dataset, batch_size=4, shuffle=False,
-                             collate_fn=collate_fn, num_workers=4, persistent_workers=True)
-
-    batch = next(eval_loader.__iter__())
-    images = batch['images']
+    images = transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))(img)
 
     posterior = vae.encode(images).latent_dist
     z = posterior.sample()
     # z = torch.randn(1, 1, 8, 64)
-    pred = vae.decoder(z)
-    save_image(pred[0], 'test_recon.png')
-    save_image(pred[0] * -1, 'test_recon_2.png')
+    pred = vae.decode(z).sample
     print()
 
 
