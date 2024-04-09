@@ -103,7 +103,7 @@ def train():
     parser.add_argument("--seed", type=int, default=24, help="random seed")
     parser.add_argument('--model_save_interval', type=int, default=5, help="model save interval")
     parser.add_argument('--wandb_log_interval_steps', type=int, default=25, help="model save interval")
-    parser.add_argument("--eval_epochs", type=int, default=20, help="eval interval")
+    parser.add_argument("--eval_epochs", type=int, default=1, help="eval interval")
     parser.add_argument("--resume_id", type=str, default=None, help="resume from checkpoint")
     parser.add_argument("--vae_config", type=str, default='configs/vae/VAE_64x768.json', help='vae config path')
     parser.add_argument("--htr_path", type=str, default='results/8da9/model_1000', help='htr checkpoint path')
@@ -299,18 +299,21 @@ def train():
                     accelerator.log(logs)
 
         train_state.epoch += 1
-        if epoch % args.eval_epochs == 0 and accelerator.is_main_process:
-            eval_loss = validation(eval_loader, vae, accelerator, loss_fn, weight_dtype, 'eval')
-            eval_loss = broadcast(torch.tensor(eval_loss, device=accelerator.device), from_process=0)
+        if epoch % args.eval_epochs == 0:
+            if accelerator.is_main_process:
+                eval_loss = validation(eval_loader, vae, accelerator, loss_fn, weight_dtype, 'eval')
+                eval_loss = broadcast(torch.tensor(eval_loss, device=accelerator.device), from_process=0)
 
-            if args.use_ema:
-                ema_vae.store(vae.parameters())
-                ema_vae.copy_to(vae.parameters())
-                _ = validation(eval_loader, vae, accelerator, loss_fn, weight_dtype, 'ema')
-                ema_vae.restore(vae.parameters())
+                if args.use_ema:
+                    ema_vae.store(vae.parameters())
+                    ema_vae.copy_to(vae.parameters())
+                    _ = validation(eval_loader, vae, accelerator, loss_fn, weight_dtype, 'ema')
+                    ema_vae.restore(vae.parameters())
 
-            logger.info(f"Epoch {epoch} - Eval loss: {eval_loss}")
-            accelerator.save_state()
+                logger.info(f"Epoch {epoch} - Eval loss: {eval_loss}")
+                accelerator.save_state()
+
+            lr_scheduler.step(eval_loss)
 
         if accelerator.is_main_process and epoch % args.model_save_interval == 0:
             vae_model = accelerator.unwrap_model(vae)
@@ -318,7 +321,6 @@ def train():
             del vae_model
 
         accelerator.wait_for_everyone()
-        lr_scheduler.step(eval_loss)
 
     accelerator.wait_for_everyone()
     if accelerator.is_main_process:
