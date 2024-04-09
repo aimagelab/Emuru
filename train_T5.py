@@ -15,13 +15,13 @@ from utils import MetricCollector
 from torchvision.utils import make_grid
 
 from models.autoencoder_kl import AutoencoderKL
-from models import OrigamiNet
+# from models import OrigamiNet
 
 
 class Emuru(torch.nn.Module):
     def __init__(self,
                  t5_checkpoint="google-t5/t5-small",
-                 vae_checkpoint='files/checkpoints/lightning_vae/vae.ckpt',
+                 vae_checkpoint='files/checkpoints/vae_0850',
                  ocr_checkpoint='files/checkpoints/Origami_bw_img/origami.pth',
                  slices_per_query=1):
         super(Emuru, self).__init__()
@@ -38,8 +38,8 @@ class Emuru(torch.nn.Module):
         self.vae = AutoencoderKL.from_pretrained(vae_checkpoint)
         self.set_training(self.vae, False)
 
-        self.ocr = OrigamiNet.from_checkpoint(ocr_checkpoint, o_classes=165, n_channels=1)
-        self.set_training(self.ocr, False)
+        # self.ocr = OrigamiNet.from_checkpoint(ocr_checkpoint, o_classes=165, n_channels=1)
+        # self.set_training(self.ocr, False)
         
         self.query_rearrange = Rearrange('b c h (w q) -> b w (q c h)', q=slices_per_query)
         self.z_rearrange = Rearrange('b w (q c h) -> b c h (w q)', c=1, q=slices_per_query)
@@ -55,7 +55,7 @@ class Emuru(torch.nn.Module):
 
     def _img_encode(self, img):
         posterior = self.vae.encode(img.float())
-        z = posterior.sample()
+        z = posterior.latent_dist.sample()
         z_sequence = self.query_rearrange(z)
         decoder_inputs_embeds = self.query_emb(z_sequence)
         sos = repeat(self.sos.weight, '1 d -> b 1 d', b=decoder_inputs_embeds.size(0))
@@ -65,17 +65,15 @@ class Emuru(torch.nn.Module):
     def forward(self, text=None, img=None, input_ids=None, attention_mask=None, length=None):
         decoder_inputs_embeds, z_sequence, z = self._img_encode(img)
         output = self.T5(input_ids, attention_mask=attention_mask, decoder_inputs_embeds=decoder_inputs_embeds)
+        pred_latent = self.z_rearrange(output.logits[:, :-1])
 
         mse_loss = self.mse_criterion(output.logits[:, :-1], z_sequence)
 
-        pred_latent = self.z_rearrange(output.logits[:, :-1])
-        ocr_gt_preds = self.ocr(img.float())
-        ocr_img_preds = self.ocr(self.vae.decode(pred_latent))
-        ocr_loss = self.mse_criterion(ocr_img_preds, ocr_gt_preds)
+        # ocr_gt_preds = self.ocr(img.float())
+        # ocr_img_preds = self.ocr(self.vae.decode(pred_latent))
+        # ocr_loss = self.mse_criterion(ocr_img_preds, ocr_gt_preds)
 
-        alpha = 0.1
-        loss = alpha * mse_loss + (1 - alpha) * ocr_loss
-        return {'loss': loss, 'mse_loss': mse_loss, 'ocr_loss': ocr_loss}, pred_latent, z
+        return {'loss': mse_loss, 'mse_loss': mse_loss, 'ocr_loss': 0}, pred_latent, z
     
     
     @torch.no_grad()
@@ -138,7 +136,8 @@ def train(args):
 
     optimizer = torch.optim.AdamW(model.T5.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
 
-    dataset = OnlineFontSquare('files/font_square/fonts', 'files/font_square/backgrounds', TextSampler(8, 32, 4))
+    dataset = OnlineFontSquare('files/font_square/fonts', 'files/font_square/backgrounds', TextSampler(8, 32, (4, 7)))
+    dataset.length *= 10
     loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, collate_fn=model.data_collator,
                         num_workers=args.dataloader_num_workers, persistent_workers=args.dataloader_num_workers > 0)
 
@@ -174,8 +173,8 @@ def train(args):
 
         with torch.no_grad():
             model.eval()
-            pred = torch.clamp(model.vae.decode(pred), -1, 1)
-            gt = torch.clamp(model.vae.decode(gt), -1, 1)
+            pred = repeat(torch.clamp(model.vae.decode(pred).sample, -1, 1), 'b 1 h w -> b 3 h w')
+            gt = repeat(torch.clamp(model.vae.decode(gt).sample, -1, 1), 'b 1 h w -> b 3 h w')
             img = torch.cat([batch['img'], gt, pred], dim=-1)[:16]
 
             def _continue_gen(style_len):
@@ -183,12 +182,17 @@ def train(args):
                 test_img[:, :, :, style_len * 8] = -1  # add a black line between style and pred
                 return test_img
             
+            style_len_img = torch.cat([gt,
+                                   make_grid(_continue_gen(1), nrow=1, normalize=True),
+                                   make_grid(_continue_gen(4), nrow=1, normalize=True),
+                                   make_grid(_continue_gen(8), nrow=1, normalize=True),
+                                   make_grid(_continue_gen(16), nrow=1, normalize=True),
+                                   make_grid(_continue_gen(32), nrow=1, normalize=True),
+                                   ], dim=-1)
+
             if args.wandb: wandb.log({
                 'img_recon_pred': wandb.Image(make_grid(img, nrow=1, normalize=True)),
-                'style_len_1': wandb.Image(make_grid(_continue_gen(1), nrow=1, normalize=True)),
-                'style_len_8': wandb.Image(make_grid(_continue_gen(8), nrow=1, normalize=True)),
-                'style_len_16': wandb.Image(make_grid(_continue_gen(16), nrow=1, normalize=True)),
-                'style_len_32': wandb.Image(make_grid(_continue_gen(32), nrow=1, normalize=True)),
+                'style_len_img': wandb.Image(style_len_img),
             } | collector.dict())
                 
         if epoch % 10 == 0 and epoch > 0:
@@ -202,7 +206,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Train a T5 model with a VAE')
     parser.add_argument('--device', type=str, default='cuda', help='Device')
     parser.add_argument('--t5_checkpoint', type=str, default='google-t5/t5-small', help='T5 checkpoint')
-    parser.add_argument('--vae_checkpoint', type=str, default='files/checkpoints/lightning_vae/vae.ckpt', help='VAE checkpoint')
+    parser.add_argument('--vae_checkpoint', type=str, default='files/checkpoints/vae_0850', help='VAE checkpoint')
     parser.add_argument('--ocr_checkpoint', type=str, default='files/checkpoints/Origami_bw_img/origami.pth', help='OCR checkpoint')
     parser.add_argument('--output_dir', type=str, default='files/checkpoints/Emuru_sm', help='Output directory')
     parser.add_argument('--learning_rate', type=float, default=0.0001, help='Learning rate')
@@ -210,7 +214,7 @@ if __name__ == '__main__':
     parser.add_argument('--weight_decay', type=float, default=0.01, help='Weight decay')
     parser.add_argument('--num_train_epochs', type=int, default=10 ** 10, help='Number of train epochs')
     parser.add_argument('--report_to', type=str, default='none', help='Report to')
-    parser.add_argument('--dataloader_num_workers', type=int, default=8, help='Dataloader num workers')
+    parser.add_argument('--dataloader_num_workers', type=int, default=12, help='Dataloader num workers')
     parser.add_argument('--slices_per_query', type=int, default=1, help='Number of slices to predict in each query')
     parser.add_argument('--wandb', action='store_true', help='Use wandb')
     parser.add_argument('--resume', action='store_true', help='Resume training')

@@ -118,6 +118,7 @@ class OnlineFontSquare(Dataset):
         return self.length
 
     def __getitem__(self, font_id):
+        font_id = font_id % len(self.fonts)
         text = self.text_sampler()
         sample = self.transform({'text': text, 'font_id': font_id})
         sos = torch.LongTensor([START_OF_SEQUENCE])
@@ -145,7 +146,7 @@ class HFDataCollector:
     def __call__(self, batch):
         txts = [sample['text'] for sample in batch]
         res = self.tokenizer(txts, padding=True, return_tensors='pt', return_attention_mask=True, return_length=True)
-        res['img'] = pad_images([sample['bw_img'] for sample in batch])
+        res['img'] = pad_images([sample['image'] for sample in batch])
         return res
 
 
