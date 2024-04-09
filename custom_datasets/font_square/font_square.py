@@ -145,7 +145,7 @@ class HFDataCollector:
     def __call__(self, batch):
         txts = [sample['text'] for sample in batch]
         res = self.tokenizer(txts, padding=True, return_tensors='pt', return_attention_mask=True, return_length=True)
-        res['img'] = pad_images([sample['img'] for sample in batch])
+        res['img'] = pad_images([sample['bw_img'] for sample in batch])
         return res
 
 
@@ -213,6 +213,7 @@ class TextSampler:
         unigram_score = sum([self.unigram_counts[c] for c in word]) / len(word)
         bigram_score = sum([self.bigram_counts[''.join(b)] for b in bigrams]) / len(bigrams)
         return (unigram_score + bigram_score) / 2
+
 
     def __call__(self):
         words_count = random.randint(self.min_count, self.max_count)

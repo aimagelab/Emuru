@@ -66,7 +66,6 @@ class RenderImage(object):
             print(
                 f'Error rendering "{sample["text"]}" with font {self.ids_to_fonts[font_id]}. Try to render only ascii letters.')
             sample['text'] = ''.join([c for c in sample['text'] if c in set(string.ascii_lowercase + ' ')])
-            np_img = render_class.render(sample['text'], return_np=True, action='top_left', pad=self.pad)
 
         sample['img'] = torch.from_numpy(np_img).unsqueeze(0).float()
         return sample
@@ -152,7 +151,6 @@ class MaxWidth:
 
         return sample
 
-
 class ToWidth:
     def __init__(self, width):
         self.width = width
@@ -172,7 +170,6 @@ class ToWidth:
             sample['bg_patch'] = sample['bg_patch'][:, :, :self.width]
 
         return sample
-
 
 class PadDivisible:
     def __init__(self, divisor):
