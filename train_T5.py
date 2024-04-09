@@ -23,7 +23,7 @@ class Emuru(torch.nn.Module):
                  t5_checkpoint="google-t5/t5-small",
                  vae_checkpoint='files/checkpoints/lightning_vae/vae.ckpt',
                  ocr_checkpoint='files/checkpoints/Origami_bw_img/origami.pth',
-                 slices_per_query=1):
+                 slices_per_query=1, alpha=0.1):
         super(Emuru, self).__init__()
         self.tokenizer = AutoTokenizer.from_pretrained('google/byt5-small')  # per-character tokenizer
         self.data_collator = HFDataCollector(tokenizer=self.tokenizer)
@@ -39,8 +39,15 @@ class Emuru(torch.nn.Module):
         self.vae = LightningAutoencoderKL.load_from_checkpoint(vae_checkpoint, strict=False)
         self.set_training(self.vae, False)
 
-        self.ocr = OrigamiNet.from_checkpoint(ocr_checkpoint, o_classes=165, n_channels=1)
-        self.set_training(self.ocr, False)
+        self.alpha = alpha
+        assert 0 <= self.alpha <= 1
+
+        if alpha < 1:
+            self.ocr = OrigamiNet.from_checkpoint(ocr_checkpoint, o_classes=165, n_channels=1)
+            self.set_training(self.ocr, False)
+        else:
+            print('OCR is disabled because alpha is 1.0')
+            self.ocr = torch.nn.Identity()
         
         self.query_rearrange = Rearrange('b c h (w q) -> b w (q c h)', q=slices_per_query)
         self.z_rearrange = Rearrange('b w (q c h) -> b c h (w q)', c=1, q=slices_per_query)
@@ -66,16 +73,21 @@ class Emuru(torch.nn.Module):
     def forward(self, text=None, img=None, input_ids=None, attention_mask=None, length=None):
         decoder_inputs_embeds, z_sequence, z = self._img_encode(img)
         output = self.T5(input_ids, attention_mask=attention_mask, decoder_inputs_embeds=decoder_inputs_embeds)
-
-        mse_loss = self.mse_criterion(output.logits[:, :-1], z_sequence)
-
         pred_latent = self.z_rearrange(output.logits[:, :-1])
-        ocr_gt_preds = self.ocr(img.float())
-        ocr_img_preds = self.ocr(self.vae.decode(pred_latent))
-        ocr_loss = self.mse_criterion(ocr_img_preds, ocr_gt_preds)
 
-        alpha = 0.1
-        loss = alpha * mse_loss + (1 - alpha) * ocr_loss
+        if self.alpha > 0:
+            mse_loss = self.mse_criterion(output.logits[:, :-1], z_sequence)
+        else:
+            mse_loss = torch.tensor(0, device=z.device)
+
+        if self.alpha < 1:
+            ocr_gt_preds = self.ocr(img.float())
+            ocr_img_preds = self.ocr(self.vae.decode(pred_latent))
+            ocr_loss = self.mse_criterion(ocr_img_preds, ocr_gt_preds)
+        else:
+            ocr_loss = torch.tensor(0, device=z.device)
+
+        loss = self.alpha * mse_loss + (1 - self.alpha) * ocr_loss
         return {'loss': loss, 'mse_loss': mse_loss, 'ocr_loss': ocr_loss}, pred_latent, z
     
     
@@ -130,7 +142,7 @@ def train(args):
     if args.device == 'cpu':
         print('WARNING: Using CPU')
 
-    model = Emuru(args.t5_checkpoint, args.vae_checkpoint, args.ocr_checkpoint, args.slices_per_query).to(args.device)
+    model = Emuru(args.t5_checkpoint, args.vae_checkpoint, args.ocr_checkpoint, args.slices_per_query, args.alpha).to(args.device)
 
     if args.resume:
         model.load_pretrained(args.output_dir)
@@ -215,6 +227,7 @@ if __name__ == '__main__':
     parser.add_argument('--slices_per_query', type=int, default=1, help='Number of slices to predict in each query')
     parser.add_argument('--wandb', action='store_true', help='Use wandb')
     parser.add_argument('--resume', action='store_true', help='Resume training')
+    parser.add_argument('--alpha', type=float, default=0.1, help='Alpha')
     args = parser.parse_args()
 
     train(args)
