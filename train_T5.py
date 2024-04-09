@@ -14,7 +14,7 @@ from tqdm import tqdm
 from utils import MetricCollector
 from torchvision.utils import make_grid
 
-from models import AutoencoderKL as LightningAutoencoderKL
+from models.autoencoder_kl import AutoencoderKL
 from models import OrigamiNet
 
 
@@ -35,8 +35,7 @@ class Emuru(torch.nn.Module):
         self.sos = torch.nn.Embedding(1, config.d_model)
         self.query_emb = torch.nn.Linear(8 * slices_per_query, config.d_model)
 
-        # self.vae = AutoencoderKL.from_pretrained(vae_checkpoint)
-        self.vae = LightningAutoencoderKL.load_from_checkpoint(vae_checkpoint, strict=False)
+        self.vae = AutoencoderKL.from_pretrained(vae_checkpoint)
         self.set_training(self.vae, False)
 
         self.ocr = OrigamiNet.from_checkpoint(ocr_checkpoint, o_classes=165, n_channels=1)
