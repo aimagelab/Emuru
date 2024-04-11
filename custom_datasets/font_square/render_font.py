@@ -18,12 +18,13 @@ class Render:
     ink_path = None
     pag_path = None
 
-    def __init__(self, font_path, height=None, width=None, font_size=64):
+    def __init__(self, font_path, height=None, width=None, font_size=64, charset=None):
         self.font_path = font_path
         self.font_size = font_size
         self.height = height
         self.width = width
         self.font = ImageFont.truetype(self.font_path, self.font_size)
+        self.charset = charset
     
     def calibrate(self, text=None, threshold=0.7, height=128, width=2500):
         text = string.ascii_letters if text is None else text
@@ -56,7 +57,10 @@ class Render:
         y0 = randint(0, img_w - w)
         return img[x0:x0+h, y0:y0+w]
 
-    def render(self, text, return_np=False, action='random', pad=0):
+    def render(self, text, action='random', pad=0):
+        if self.charset is not None:
+            text = ''.join([c for c in text if c in self.charset])
+
         bbox_width, bbox_height = self._text_wh(text)
         if self.height is None or self.width is None:
             h, w =  bbox_height + 2 * pad, bbox_width + 2 * pad
@@ -90,7 +94,7 @@ class Render:
         # img = unpad(img)
         # img = np.pad(img, 30, mode='constant', constant_values=255)
         img = self._convert_colors(img)
-        return img if return_np else Image.fromarray(img)
+        return img, text
     
     def __call__(self, text):
         return self.render(text)

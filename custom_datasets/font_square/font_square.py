@@ -95,19 +95,19 @@ class OnlineFontSquare(Dataset):
         self.text_sampler = text_sampler
         self.transform = T.Compose([
             FT.RenderImage(self.fonts, calib_threshold=0.8, pad=20),
-            FT.RandomRotation(3, fill=1),
-            FT.RandomWarping(grid_shape=(5, 2), p=0.25),
-            FT.GaussianBlur(kernel_size=3),
-            FT.RandomBackground(backgrounds),
+            FT.RandomRotation(3, fill=1, p=0.5),
+            FT.RandomWarping(grid_shape=(5, 2), p=0.15),
+            FT.GaussianBlur(kernel_size=3, p=0.5),
+            FT.RandomBackground(backgrounds, white_p=0.5),
             FT.TailorTensor(pad=3),
             FT.MergeWithBackground(),
             # FT.GrayscaleErosion(kernel_size=2, p=0.05),
             FT.GrayscaleDilation(kernel_size=2, p=0.1),
-            FT.ColorJitter(brightness=0.15, contrast=0.15, saturation=0.15, hue=0),
+            FT.ColorJitter(brightness=0.15, contrast=0.15, saturation=0.15, hue=0, p=0.5),
             FT.ImgResize(64),
             # FT.MaxWidth(768),
             FT.ToWidth(768),
-            FT.PadDivisible(8),
+            # FT.PadDivisible(8),
             FT.Normalize((0.5,), (0.5,))
         ]) if transform is None else transform
 

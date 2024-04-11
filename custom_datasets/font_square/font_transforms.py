@@ -42,9 +42,15 @@ class RenderImage(object):
         else:
             fonts_data = {}
 
+        fonts_charset_path = fonts_path[0].parent.parent / 'check_fonts.json'
+        with open(fonts_charset_path, 'r') as f:
+            fonts_charset = json.load(f)
+
         def render_fn(font_path):
             font_size = fonts_data[font_path.name] if font_path.name in fonts_data else 64
-            render = Render(font_path, height, width, font_size)
+            charset = fonts_charset[font_path.name]['charset'] if font_path.name in fonts_charset else None
+            charset = set(charset) if len(charset) > 0 else None
+            render = Render(font_path, height, width, font_size, charset)
             fonts_data[font_path.name] if font_path.name not in fonts_data else render.calibrate(calib_text,
                                                                                                  calib_threshold,
                                                                                                  calib_h)
@@ -61,11 +67,11 @@ class RenderImage(object):
         font_id = sample['font_id'] if 'font_id' in sample else random.randrange(len(self.renderers))
         render_class = self.renderers[font_id]
         try:
-            np_img = render_class.render(sample['text'], return_np=True, action='top_left', pad=self.pad)
+            np_img, sample['text'] = render_class.render(sample['text'], action='top_left', pad=self.pad)
         except OSError:
             print(f'Error rendering "{sample["text"]}" with font {self.ids_to_fonts[font_id]}. Try to render only ascii letters.')
             sample['text'] = ''.join([c for c in sample['text'] if c in set(string.ascii_lowercase + ' ')])
-            np_img = render_class.render(sample['text'], return_np=True, action='top_left', pad=self.pad)
+            np_img, sample['text'] = render_class.render(sample['text'], action='top_left', pad=self.pad)
 
         sample['img'] = torch.from_numpy(np_img).unsqueeze(0).float()
         return sample
@@ -114,8 +120,13 @@ class RandomWarping:
 
 
 class GaussianBlur(T.GaussianBlur):
+    def __init__(self, kernel_size, p=0.5):
+        super().__init__(kernel_size)
+        self.p = p
+
     def __call__(self, sample):
-        sample['img'] = super().forward(sample['img'])
+        if random.random() < self.p:
+            sample['img'] = super().forward(sample['img'])
         return sample
 
 
@@ -190,8 +201,9 @@ class PadDivisible:
 class RandomBackground(object):
     start_time = time.time()
 
-    def __init__(self, backgrounds):
+    def __init__(self, backgrounds, white_p=0.5):
         self.bgs = [F.to_tensor(Image.open(path).convert('RGB')) for path in backgrounds]
+        self.white_p = white_p
 
     def get_available_idx(self, img_h, img_w):
         return [bg for bg in self.bgs if bg.shape[1] >= img_h and bg.shape[2] >= img_w] + [
@@ -208,6 +220,10 @@ class RandomBackground(object):
     def __call__(self, sample):
         _, h, w = sample['img'].shape
 
+        if random.random() < self.white_p:
+            sample['bg_patch'] = torch.ones((3, h, w))
+            return sample
+        
         available_bgs = self.get_available_idx(h, w)
         bg = random.choice(available_bgs)
         if bg is not None:
@@ -267,17 +283,24 @@ class Normalize(T.Normalize):
 
 
 class RandomRotation(T.RandomRotation):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, p=0.5, **kwargs):
         super().__init__(*args, **kwargs)
+        self.p = p
 
     def forward(self, sample):
-        sample['img'] = super().forward(sample['img'])
+        if random.random() < self.p:
+            sample['img'] = super().forward(sample['img'])
         return sample
 
 
 class ColorJitter(T.ColorJitter):
+    def __init__(self, *args, p=0.5, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.p = p
+
     def forward(self, sample):
-        sample['img'] = super().forward(sample['img'])
+        if random.random() < self.p:
+            sample['img'] = super().forward(sample['img'])
         return sample
 
 

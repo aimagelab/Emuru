@@ -102,7 +102,7 @@ class Emuru(torch.nn.Module):
             new_z_sequence.append(output.logits[:, -1:])
 
         z_sequence = torch.cat(new_z_sequence, dim=1)
-        img = torch.clamp(self.vae.decode(self.z_rearrange(z_sequence)), -1, 1)
+        img = torch.clamp(self.vae.decode(self.z_rearrange(z_sequence)).sample, -1, 1)
         return img
     
     def save_pretrained(self, path):
@@ -110,7 +110,7 @@ class Emuru(torch.nn.Module):
         path.mkdir(parents=True, exist_ok=True)
         torch.save(self.T5.state_dict(), path / 'T5.pth')
         torch.save(self.vae.state_dict(), path / 'VAE.pth')
-        torch.save(self.ocr.state_dict(), path / 'OCR.pth')
+        # torch.save(self.ocr.state_dict(), path / 'OCR.pth')
         torch.save(self.query_emb.state_dict(), path / 'query_emb.pth')
         torch.save(self.sos.state_dict(), path / 'sos.pth')
 
@@ -118,7 +118,7 @@ class Emuru(torch.nn.Module):
         path = Path(path)
         self.T5.load_state_dict(torch.load(path / 'T5.pth'))
         self.vae.load_state_dict(torch.load(path / 'VAE.pth'))
-        self.ocr.load_state_dict(torch.load(path / 'OCR.pth'))
+        # self.ocr.load_state_dict(torch.load(path / 'OCR.pth'))
         self.query_emb.load_state_dict(torch.load(path / 'query_emb.pth'))
         self.sos.load_state_dict(torch.load(path / 'sos.pth'))
 
@@ -182,7 +182,7 @@ def train(args):
                 test_img[:, :, :, style_len * 8] = -1  # add a black line between style and pred
                 return test_img
             
-            style_len_img = torch.cat([gt,
+            style_len_img = torch.cat([make_grid(gt[:16], nrow=1, normalize=True),
                                    make_grid(_continue_gen(1), nrow=1, normalize=True),
                                    make_grid(_continue_gen(4), nrow=1, normalize=True),
                                    make_grid(_continue_gen(8), nrow=1, normalize=True),
@@ -195,7 +195,7 @@ def train(args):
                 'style_len_img': wandb.Image(style_len_img),
             } | collector.dict())
                 
-        if epoch % 10 == 0 and epoch > 0:
+        if epoch % 1 == 0 and epoch > 0:
             model.save_pretrained(args.output_dir)
             print(f'Saved model at epoch {epoch} in {args.output_dir}')
         
