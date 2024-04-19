@@ -4,7 +4,7 @@ from transformers import AutoTokenizer
 from transformers import T5ForConditionalGeneration, T5Config
 from custom_datasets import OnlineFontSquare, HFDataCollector, TextSampler, FixedTextSampler, dataset_factory
 from einops.layers.torch import Rearrange
-from einops import repeat
+from einops import rearrange, repeat
 from torch.nn import MSELoss, CTCLoss
 from pathlib import Path
 from torch.utils.data import DataLoader
@@ -13,6 +13,7 @@ import argparse
 from tqdm import tqdm
 from utils import MetricCollector
 from torchvision.utils import make_grid, save_image
+from PIL import Image, ImageDraw, ImageFont
 
 from models.autoencoder_kl import AutoencoderKL
 # from models import OrigamiNet
@@ -30,9 +31,11 @@ class Emuru(torch.nn.Module):
         config = T5Config.from_pretrained(t5_checkpoint)
         config.vocab_size = len(self.tokenizer)
         self.T5 = T5ForConditionalGeneration(config)
-        self.T5.lm_head = torch.nn.Linear(config.d_model, 8 * slices_per_query, bias=False)
+        self.T5.lm_head = torch.nn.Identity()
         self.sos = torch.nn.Embedding(1, config.d_model)
         self.query_emb = torch.nn.Linear(8 * slices_per_query, config.d_model)
+        self.t5_to_vae = torch.nn.Linear(config.d_model, 8 * slices_per_query, bias=False)
+        self.t5_to_ocr = torch.nn.Linear(config.d_model, len(self.tokenizer), bias=False)
 
         self.vae = AutoencoderKL.from_pretrained(vae_checkpoint)
         self.set_training(self.vae, False)
@@ -45,6 +48,7 @@ class Emuru(torch.nn.Module):
         self.z_rearrange_eval = Rearrange('w b (q c h) -> b c h (w q)', c=1, q=slices_per_query)
 
         self.mse_criterion = MSELoss()
+        self.ctc_criterion = CTCLoss()
         self.trainer = None
 
     def set_training(self, model, training):
@@ -70,15 +74,74 @@ class Emuru(torch.nn.Module):
         decoder_inputs_embeds, z_sequence, z = self._img_encode(img, noise)
 
         output = self.T5(input_ids, attention_mask=attention_mask, decoder_inputs_embeds=decoder_inputs_embeds)
-        pred_latent = self.z_rearrange(output.logits[:, :-1])
+        vae_latent = self.t5_to_vae(output.logits[:, :-1])
+        pred_latent = self.z_rearrange(vae_latent)
 
-        mse_loss = self.mse_criterion(output.logits[:, :-1], z_sequence)
+        mse_loss = self.mse_criterion(vae_latent, z_sequence)
 
-        # ocr_gt_preds = self.ocr(img.float())
-        # ocr_img_preds = self.ocr(self.vae.decode(pred_latent))
-        # ocr_loss = self.mse_criterion(ocr_img_preds, ocr_gt_preds)
+        # ocr_preds = self.t5_to_ocr(output.logits)
+        # preds_size = torch.IntTensor([ocr_preds.size(1)] * ocr_preds.size(0)).to(ocr_preds.device)
+        # ocr_preds = ocr_preds.permute(1, 0, 2).log_softmax(2)
+        # ocr_loss = self.ctc_criterion(ocr_preds, input_ids, preds_size, length)
+        ocr_loss = 0
 
-        return {'loss': mse_loss, 'mse_loss': mse_loss, 'ocr_loss': 0}, pred_latent, z
+        loss = mse_loss + ocr_loss
+
+        # idx = 0
+        # self.split_characters(pred_latent[idx:idx+1], z[idx:idx+1], ocr_preds.argmax(-1)[:, idx])
+
+        return {'loss': loss, 'mse_loss': mse_loss, 'ocr_loss': ocr_loss}, pred_latent, z
+    
+
+    def split_characters(self, pred, gt, indices):
+        pred = self.vae.decode(pred).sample
+        gt = self.vae.decode(gt).sample
+        img = torch.cat([gt, pred], dim=-2)
+
+        curr_char = indices[0]
+        for idx, char in enumerate(indices):
+            if char != curr_char:
+                img[:, :, :, idx * 8 - 1] = -1
+                curr_char = char
+
+        img = self.write_text_below_image(img, self.tokenizer.decode(indices))
+
+        return img
+    
+
+    @torch.no_grad()
+    def write_text_below_image(self, image, text):
+        image = (torch.clamp(image, -1, 1) + 1) * 127.5
+        image = rearrange(image.to(torch.uint8), '1 1 h w -> h w').cpu().numpy()
+        image = Image.fromarray(image, mode='L')
+
+        text = text.replace('<pad>', '#').replace('</s>', '$')
+
+        # Load the font
+        font = ImageFont.load_default()
+        ascent, descent = font.getmetrics()
+        (width, baseline), (offset_x, offset_y) = font.font.getsize(text)
+
+        # Calculate dimensions for the new image
+        img_width, img_height = image.size
+        new_height = img_height + offset_y + ascent +descent
+
+        # Create a new image with white background
+        new_image = Image.new('L', (img_width, new_height), color='white')
+
+        # Paste the original image onto the new image
+        new_image.paste(image, (0, 0))
+
+        # Draw the text onto the new image
+        draw = ImageDraw.Draw(new_image)
+
+        curr_char = None
+        for idx, char in enumerate(text):
+            if char != curr_char:
+                curr_char = char
+                draw.text((idx * 8, img_height), char, fill='black', font=font)
+
+        return new_image
     
     
     @torch.no_grad()
@@ -104,7 +167,8 @@ class Emuru(torch.nn.Module):
                 decoder_inputs_embeds = self.query_emb(torch.cat(new_z_sequence, dim=1))
                 decoder_inputs_embeds = torch.cat([sos, decoder_inputs_embeds], dim=1)
             output = self.T5(input_ids, decoder_inputs_embeds=decoder_inputs_embeds)
-            new_z_sequence.append(output.logits[:, -1:])
+            vae_latent = self.t5_to_vae(output.logits[:, -1:])
+            new_z_sequence.append(vae_latent)
 
         z_sequence = torch.cat(new_z_sequence, dim=1)
         img = torch.clamp(self.vae.decode(self.z_rearrange(z_sequence)).sample, -1, 1)
@@ -149,7 +213,7 @@ def train(args):
         print('WARNING: Using CPU')
 
     model = Emuru(args.t5_checkpoint, args.vae_checkpoint, args.ocr_checkpoint, args.slices_per_query).to(args.device)
-    optimizer = torch.optim.AdamW(model.T5.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
 
     if args.resume:
         try:
@@ -215,7 +279,7 @@ def train(args):
             
             for i, batch in tqdm(enumerate(eval_loader), total=len(eval_loader), desc=f'Eval'):
                 batch = {k: v.to(args.device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
-                res = model.tokenizer(batch['style_text'], return_tensors='pt', padding=True, return_attention_mask=True)
+                res = model.tokenizer(batch['style_text'], return_tensors='pt', padding=True, return_attention_mask=True, return_length=True)
                 res = {k: v.to(args.device) if isinstance(v, torch.Tensor) else v for k, v in res.items()}
 
                 losses, pred, gt = model(img=batch['style_img'], **res)
