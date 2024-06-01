@@ -166,6 +166,9 @@ wandb/
 files/checkpoints/
 files/font_square/backgrounds/
 files/font_square/fonts/
+files/font_square/new_fonts/
+files/font_square/clean_fonts/
+files/font_square/ext_fonts/
 files/pkl_db/iam_lines_test.pkl
 files/pkl_db/iam_lines_train.pkl
 models/lightning_vae

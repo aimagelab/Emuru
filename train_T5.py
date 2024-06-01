@@ -228,7 +228,7 @@ def train(args):
             model.load_pretrained(args.output_dir)
             print(f'Resumed with the old checkpoint system: {args.output_dir}')
 
-    dataset = OnlineFontSquare('files/font_square/fonts', 'files/font_square/backgrounds', TextSampler(8, 32, (4, 7)))
+    dataset = OnlineFontSquare('files/font_square/clean_fonts', 'files/font_square/backgrounds', TextSampler(8, 32, (4, 7)))
     dataset.length *= args.db_multiplier
     loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, collate_fn=model.data_collator,
                         num_workers=args.dataloader_num_workers, persistent_workers=args.dataloader_num_workers > 0)

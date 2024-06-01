@@ -75,7 +75,7 @@ class OnlineFontSquare(Dataset):
         backgrounds = Path(backgrounds) if isinstance(backgrounds, str) else backgrounds
 
         if isinstance(fonts, Path) and fonts.is_dir():
-            self.fonts = list(fonts.glob('*.ttf'))
+            self.fonts = list(fonts.glob('*.?tf'))
         elif isinstance(fonts, Path) and fonts.is_file():
             self.fonts = [fonts]
         elif isinstance(fonts, list):
@@ -94,7 +94,7 @@ class OnlineFontSquare(Dataset):
 
         self.text_sampler = text_sampler
         self.transform = T.Compose([
-            FT.RenderImage(self.fonts, calib_threshold=0.8, pad=20),
+            FT.RenderImage(self.fonts, calib_threshold=0.8, pad=20, verbose=True),
             FT.RandomRotation(3, fill=1, p=0.5),
             FT.RandomWarping(grid_shape=(5, 2), p=0.15),
             FT.GaussianBlur(kernel_size=3, p=0.5),

@@ -10,6 +10,9 @@ import json
 import multiprocessing
 from PIL import Image
 import matplotlib.pyplot as plt
+from custom_datasets.font_square.render_font import Render
+import cv2
+import string
 
 FONT_SQUARE_CHARSET = [' ', '!', '"', '#', '$', '%', '&', "'", '(', ')', '*', '+', ',', '-', '.', '/', '0', '1', '2',
                        '3', '4', '5', '6', '7', '8', '9', ':', ';', '<', '=', '>', '?', '@', 'A', 'B', 'C', 'D', 'E',
@@ -73,7 +76,7 @@ def create_image_grid(image_list, grid_shape=None, figsize=(10, 10), cmap='gray'
         plt.show()
 
 # Function to process a single font
-def process_font(font_path):
+def check_font(font_path):
     try:
         font = TTFont(str(font_path))
 
@@ -97,14 +100,27 @@ def process_font(font_path):
             if char != ' ' and np.count_nonzero(arr) == 0:
                 continue
             if char == ' ' and np.count_nonzero(arr) != 0:
-                continue
+                raise ValueError(f'Character "{char}" is not empty in font {font_path.name}')
             h = sha1(arr).hexdigest()
             charset[h].append(char)
 
         single_chars = [v[0] for v in charset.values() if len(v) == 1]
-        return font_path.name, {'status': 'success', 'charset': single_chars}
+        # assert set(string.ascii_lowercase) - set(single_chars) == set(), f'Lowercase characters missing in font {font_path.name}'
+        return font_path.name, single_chars
     except Exception as e:
-        return font_path.name, {'error': str(e), 'status': 'failed', 'charset': []}
+        print(f'Error check characters: {font_path.name} - {str(e)}')
+        return font_path.name, None
+    
+
+# Function to process a single font
+def calibrate_font(font_path):
+    try:
+        render = Render(font_path)
+        return font_path.name, render.calibrate(threshold=0.8, height=64)
+    except Exception as e:
+        print(f'Error calibration: {font_path.name} - {str(e)}')
+        font_path.unlink()
+        return font_path.name, None
     
 
 def draw_character(font_path, char, out_height=64):
@@ -126,19 +142,22 @@ def draw_character(font_path, char, out_height=64):
         return np.array(img)
     except Exception as e:
         return np.zeros((out_height, out_height), dtype=np.uint8)
-    
 
 # Function to process fonts in parallel
-def process_fonts(fonts_list):
+def multiprocess(fonts_list, function, use_multiprocessing=True):
     results = {}
-    with multiprocessing.Pool() as pool:
-        for font, data in tqdm(pool.imap_unordered(process_font, fonts_list), total=len(fonts_list)):
-            results[font] = data
+    if use_multiprocessing:
+        with multiprocessing.Pool() as pool:
+            for font, data in tqdm(pool.imap_unordered(function, fonts_list), total=len(fonts_list)):
+                results[font] = data
+    else:
+        for font in tqdm(fonts_list, total=len(fonts_list)):
+            results[font] = function(font)
     return results
 
 if __name__ == "__main__":
-    src = Path('files/font_square/fonts')
-    fonts_list = sorted(src.glob('*.ttf'))
+    src = Path('files/font_square/clean_fonts')
+    fonts_list = sorted(src.glob('*.?tf'))
 
     # characters = []
     # for font in fonts_list:
@@ -148,9 +167,20 @@ if __name__ == "__main__":
     #     # if len(characters) == 100:
     #     #     create_image_grid(characters, grid_shape=(10, 10), figsize=(10, 10), save_path='files/characters.png')
     #     #     characters = []
-    #     process_font(font)
+    #     check_font(font)
 
-    data = process_fonts(fonts_list)
+    use_multiprocessing = True
 
-    with open('files/check_fonts.json', 'w') as f:
+    data = multiprocess(fonts_list, check_font, use_multiprocessing)
+    with open('files/fonts_charsets.json', 'w') as f:
         json.dump(data, f)
+
+    data = multiprocess(fonts_list, calibrate_font, use_multiprocessing)
+    with open('files/fonts_sizes.json', 'w') as f:
+        json.dump(data, f)
+    
+
+
+    
+
+    

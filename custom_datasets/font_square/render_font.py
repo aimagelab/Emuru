@@ -28,16 +28,15 @@ class Render:
     
     def calibrate(self, text=None, threshold=0.7, height=128, width=2500):
         text = string.ascii_letters if text is None else text
+        # Reduce font size until the text fits the threshold
         while self._perc(text, height, width) > threshold:
             self.font_size -= 1
             if self.font_size <= 1: break
             self.font = ImageFont.truetype(self.font_path, self.font_size)
-            # print(f'  Calibrating {str(self.font_path).ljust(50)} font_size: {self.font_size} '.ljust(terminal_columns), end='\r')
+        # Increase font size until the text fits the threshold
         while self._perc(text, height, width) < threshold:
             self.font_size += 1
             self.font = ImageFont.truetype(self.font_path, self.font_size)
-        #     print(f'  Calibrating {str(self.font_path).ljust(50)} font_size: {self.font_size} '.ljust(terminal_columns), end='\r')
-        # print(f'  Calibrating {str(self.font_path).ljust(50)} font_size: {self.font_size} COMPLETE'.ljust(terminal_columns))
         return self.font_size
     
     def set_templates(self, pag_path, ink_path):
@@ -72,7 +71,6 @@ class Render:
         draw = ImageDraw.Draw(img_pil)
 
         if action == 'random':
-
             margin_h, margin_w = h - bbox_height, w - bbox_width
             xy = (
                 randint(min(0, margin_w), max(0, margin_w)),
