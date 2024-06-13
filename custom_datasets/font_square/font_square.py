@@ -104,6 +104,7 @@ class OnlineFontSquare(Dataset):
             # FT.GrayscaleErosion(kernel_size=2, p=0.05),
             FT.GrayscaleDilation(kernel_size=2, p=0.1),
             FT.ColorJitter(brightness=0.15, contrast=0.15, saturation=0.15, hue=0, p=0.5),
+            FT.RandomInvert(p=0.3),
             FT.ImgResize(64),
             # FT.MaxWidth(768),
             FT.ToWidth(768),

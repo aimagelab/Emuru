@@ -351,6 +351,16 @@ class GrayscaleDilation:
             sample['bw_img'] = self.dilate(sample['bw_img'])
             sample['bg_patch'] = self.dilate(sample['bg_patch'])
         return sample
+    
+
+class RandomInvert:
+    def __init__(self, p=0.5):
+        self.p = p
+
+    def __call__(self, sample):
+        if random.random() > self.p:
+            sample['img'] = self.dilate(1 - sample['img'])
+        return sample
 
 
 class TimedCompose:
