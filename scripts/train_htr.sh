@@ -2,14 +2,14 @@
 
 #SBATCH --account=FoMo_AIISDH
 #SBATCH --partition=all_usr_prod
-#SBATCH -e /work/FoMo_AIISDH/scascianelli/2024_emuru/jobs/train_writer_id_%j.err
-#SBATCH -o /work/FoMo_AIISDH/scascianelli/2024_emuru/jobs/train_writer_id_%j.out
+#SBATCH -e /work/FoMo_AIISDH/scascianelli/2024_emuru/jobs/train_htr_%j.err
+#SBATCH -o /work/FoMo_AIISDH/scascianelli/2024_emuru/jobs/train_htr_%j.out
 #SBATCH --mem=24G
 #SBATCH --constraint="gpu_A40_48G|gpu_RTX6000_24G|gpu_RTXA5000_24G"
 #SBATCH --nodes=1
 #SBATCH --gres=gpu:1
 #SBATCH --time=1-00:00:00
-#SBATCH -J writer_id_training
+#SBATCH -J htr_training
 #SBATCH --array=0-5%1
 
 . /usr/local/anaconda3/etc/profile.d/conda.sh
