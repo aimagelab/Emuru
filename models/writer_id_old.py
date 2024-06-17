@@ -93,7 +93,7 @@ class WriterID(ModelMixin, ConfigMixin):
 
     def forward(self, x):
         x = self.conv_in(x)
-        x = self.down_blocks(x)
+        x = self.down_blocks(x)  # [B, 1, 64, 768]  -->  [B, 256, 1, 6]
 
         out = torch.mean(x, dim=[-1, -2])
         out = self.linear2(self.relu(self.linear(out)))

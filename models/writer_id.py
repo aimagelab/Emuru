@@ -27,16 +27,14 @@ from .vae import Encoder
 
 
 # Should have the following structure:
-#  | Name      | Type               | Params
+#  | Name                   | Type               | Params
 # -------------------------------------------------
-# 0 | model     | Sequential         | 1.9 M
-# 1 | linear    | Linear             | 65.8 K
-# 2 | relu      | LeakyReLU          | 0
-# 3 | linear2   | Linear             | 2.7 M
-# 4 | criterion | CrossEntropyLoss   | 0
-# 5 | acc       | MulticlassAccuracy | 0
+# 0 | feature_extractor     | Encoder            | 2.9 M
+# 1 | linear                | Linear             | 65.8 K
+# 2 | relu                  | LeakyReLU          | 0
+# 3 | linear2               | Linear             | 29.8 M
 # -------------------------------------------------
-# This implementation has 4.786.464 parameters (OLD ONE)
+# This implementation has 32.767.273 parameters
 class WriterID(ModelMixin, ConfigMixin):
 
     @register_to_config
@@ -71,7 +69,7 @@ class WriterID(ModelMixin, ConfigMixin):
         self.linear2 = nn.Linear(latent_channels, num_writers)
 
     def forward(self, x):
-        x = self.feature_extractor(x)
+        x = self.feature_extractor(x)  # [B, 1, 64, 768]  -->  [B, 256, 1, 12]
 
         out = torch.mean(x, dim=[-1, -2])
         out = self.linear2(self.relu(self.linear(out)))

@@ -65,7 +65,7 @@ def validation(eval_loader, htr, accelerator, weight_dtype, loss_fn, cer_fn, wan
     cer_value = cer_fn.compute()
     accelerator.log({
         f"{wandb_prefix}/loss": eval_loss / len(eval_loader),
-        f"{wandb_prefix}/cer": cer_value / len(eval_loader),
+        f"{wandb_prefix}/cer": cer_value,
         f"{wandb_prefix}/images": images_for_log,
     })
 
@@ -76,14 +76,13 @@ def validation(eval_loader, htr, accelerator, weight_dtype, loss_fn, cer_fn, wan
 
 def train():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--output_dir", type=str, default='results', help="output directory")
-    parser.add_argument("--logging_dir", type=str, default='results', help="logging directory")
+    parser.add_argument("--output_dir", type=str, default='results_htr', help="output directory")
+    parser.add_argument("--logging_dir", type=str, default='results_htr', help="logging directory")
     parser.add_argument("--train_batch_size", type=int, default=128, help="train batch size")
     parser.add_argument("--eval_batch_size", type=int, default=128, help="eval batch size")
     parser.add_argument("--epochs", type=int, default=10000, help="number of train epochs")
     parser.add_argument("--lr", type=float, default=1e-4, help="learning rate")
     parser.add_argument("--seed", type=int, default=24, help="random seed")
-    parser.add_argument('--model_save_interval', type=int, default=5, help="model save interval")
     parser.add_argument('--wandb_log_interval_steps', type=int, default=25, help="model save interval")
     parser.add_argument("--eval_epochs", type=int, default=5, help="eval interval")
     parser.add_argument("--resume_id", type=str, default=None, help="resume from checkpoint")
@@ -94,7 +93,7 @@ def train():
     parser.add_argument("--num_samples_per_epoch", type=int, default=None)
     parser.add_argument("--lr_scheduler", type=str, default="reduce_lr_on_plateau")
     parser.add_argument("--lr_scheduler_patience", type=int, default=10)
-    parser.add_argument("--use_ema", type=str, default="True")
+    parser.add_argument("--use_ema", type=str, default="False")
     parser.add_argument("--gradient_accumulation_steps", type=int, default=1)
     parser.add_argument("--mixed_precision", type=str, default="no")
     parser.add_argument("--checkpoints_total_limit", type=int, default=5)
@@ -155,10 +154,10 @@ def train():
         weight_decay=args.adam_weight_decay,
         eps=args.adam_epsilon)
 
-    train_dataset = OnlineFontSquare('files/font_square/fonts', 'files/font_square/backgrounds',
+    train_dataset = OnlineFontSquare('files/font_square/clean_fonts', 'files/font_square/backgrounds',
                                      text_sampler=TextSampler(8, 32, (4, 7), exponent=0.5),
                                      length=args.num_samples_per_epoch)
-    eval_dataset = OnlineFontSquare('files/font_square/fonts', 'files/font_square/backgrounds',
+    eval_dataset = OnlineFontSquare('files/font_square/clean_fonts', 'files/font_square/backgrounds',
                                     text_sampler=TextSampler(8, 32, (4, 7), exponent=0.5),
                                     length=args.num_samples_per_epoch)
 
@@ -173,8 +172,7 @@ def train():
         scheduler_specific_kwargs={"patience": args.lr_scheduler_patience}
     )
 
-    htr, optimizer, train_loader, eval_loader, lr_scheduler = accelerator.prepare(
-        htr, optimizer, train_loader, eval_loader, lr_scheduler)
+    htr, optimizer, train_loader, eval_loader, lr_scheduler = accelerator.prepare(htr, optimizer, train_loader, eval_loader, lr_scheduler)
 
     weight_dtype = torch.float32
     if accelerator.mixed_precision == "fp16":
@@ -205,8 +203,11 @@ def train():
     train_state = TrainState(global_step=0, epoch=0)
     accelerator.register_for_checkpointing(train_state)
     if args.resume_id:
-        accelerator.load_state()
-        accelerator.project_configuration.iteration = train_state.epoch
+        try:
+            accelerator.load_state()
+            accelerator.project_configuration.iteration = train_state.epoch
+        except FileNotFoundError as e:
+            logger.info(f"Checkpoint not found: {e}. Creating a new run")
 
     smooth_ce_loss = SmoothCrossEntropyLoss(tgt_pad_idx=train_dataset.alphabet.pad)
     cer = evaluate.load('cer')
@@ -222,7 +223,7 @@ def train():
         train_loss = 0.
         train_cer = 0.
 
-        for step, batch in enumerate(train_loader):
+        for _, batch in enumerate(train_loader):
 
             with accelerator.autocast():
                 with accelerator.accumulate(htr):
@@ -278,8 +279,6 @@ def train():
                     accelerator.log(logs)
 
         train_state.epoch += 1
-
-        print(f'{accelerator.device} before eval')
         if epoch % args.eval_epochs == 0 and accelerator.is_main_process:
             with torch.no_grad():
                 eval_cer = validation(eval_loader, htr, accelerator, weight_dtype, smooth_ce_loss, cer, 'eval')
@@ -291,18 +290,19 @@ def train():
                     _ = validation(eval_loader, htr, accelerator, weight_dtype, smooth_ce_loss, cer, 'ema')
                     ema_htr.restore(htr.parameters())
 
-            logger.info(f"Epoch {epoch} - Eval CER: {eval_cer}")
+                if eval_cer < train_state.best_eval:
+                    train_state.best_eval = eval_cer
+                    htr_to_save = accelerator.unwrap_model(htr)
+                    htr_to_save.save_pretrained(args.output_dir / f"model_{epoch:04d}")
+                    del htr_to_save
+                    logger.info(f"Epoch {epoch} - Best eval CER: {eval_cer}")
+
+                train_state.last_eval = eval_cer
+            
             accelerator.save_state()
 
-        print(f'{accelerator.device} waiting for everyone')
         accelerator.wait_for_everyone()
-        print(f'{accelerator.device} continuing')
-        if accelerator.is_main_process and epoch % args.model_save_interval == 0:
-            htr_to_save = accelerator.unwrap_model(htr)
-            htr_to_save.save_pretrained(args.output_dir / f"model_{epoch:04d}")
-            del htr_to_save
-
-        lr_scheduler.step(eval_cer)
+        lr_scheduler.step(train_state.last_eval)
 
     accelerator.wait_for_everyone()
     if accelerator.is_main_process:

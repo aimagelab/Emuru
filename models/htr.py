@@ -49,6 +49,7 @@ class HTR(ModelMixin, ConfigMixin):
                  htr_dropout: float = 0.1,
                  num_encoder_layers: int = 2,
                  num_decoder_layers: int = 4,
+                 
                  ):
         super(HTR, self).__init__()
 

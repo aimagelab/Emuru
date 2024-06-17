@@ -1,5 +1,5 @@
 {
-  "num_writers": 10400,
+  "num_writers": 115961,
   "act_fn": "silu",
   "block_out_channels": [
       16,
@@ -8,11 +8,9 @@
       128,
       128,
       128,
-      256,
       256
   ],
   "down_block_types": [
-      "DownEncoderBlock2D",
       "DownEncoderBlock2D",
       "DownEncoderBlock2D",
       "DownEncoderBlock2D",

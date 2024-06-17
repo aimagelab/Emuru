@@ -60,7 +60,7 @@ def validation(eval_loader, writer_id, accelerator, weight_dtype, loss_fn, accur
 
     accelerator.log({
         f"{wandb_prefix}/loss": eval_loss / len(eval_loader),
-        f"{wandb_prefix}/accuracy": accuracy_value / len(eval_loader),
+        f"{wandb_prefix}/accuracy": accuracy_value,
         f"{wandb_prefix}/images": images_for_log,
     })
 
@@ -71,14 +71,13 @@ def validation(eval_loader, writer_id, accelerator, weight_dtype, loss_fn, accur
 
 def train():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--output_dir", type=str, default='results', help="output directory")
-    parser.add_argument("--logging_dir", type=str, default='results', help="logging directory")
+    parser.add_argument("--output_dir", type=str, default='results_wid', help="output directory")
+    parser.add_argument("--logging_dir", type=str, default='results_wid', help="logging directory")
     parser.add_argument("--train_batch_size", type=int, default=256, help="train batch size")
     parser.add_argument("--eval_batch_size", type=int, default=128, help="eval batch size")
     parser.add_argument("--epochs", type=int, default=10000, help="number of train epochs")
     parser.add_argument("--lr", type=float, default=1e-4, help="learning rate")
     parser.add_argument("--seed", type=int, default=24, help="random seed")
-    parser.add_argument('--model_save_interval', type=int, default=5, help="model save interval")
     parser.add_argument('--wandb_log_interval_steps', type=int, default=25, help="model save interval")
     parser.add_argument("--eval_epochs", type=int, default=25, help="eval interval")
     parser.add_argument("--resume_id", type=str, default=None, help="resume from checkpoint")
@@ -90,7 +89,7 @@ def train():
     parser.add_argument("--num_samples_per_epoch", type=int, default=None)
     parser.add_argument("--lr_scheduler", type=str, default="reduce_lr_on_plateau")
     parser.add_argument("--lr_scheduler_patience", type=int, default=50)
-    parser.add_argument("--use_ema", type=str, default="True")
+    parser.add_argument("--use_ema", type=str, default="False")
     parser.add_argument("--gradient_accumulation_steps", type=int, default=1)
     parser.add_argument("--mixed_precision", type=str, default="no")
     parser.add_argument("--checkpoints_total_limit", type=int, default=5)
@@ -151,10 +150,10 @@ def train():
         weight_decay=args.adam_weight_decay,
         eps=args.adam_epsilon)
 
-    train_dataset = OnlineFontSquare('files/font_square/fonts', 'files/font_square/backgrounds',
+    train_dataset = OnlineFontSquare('files/font_square/clean_fonts', 'files/font_square/backgrounds',
                                      text_sampler=TextSampler(8, 32, (4, 7), exponent=0.5),
                                      length=args.num_samples_per_epoch)
-    eval_dataset = OnlineFontSquare('files/font_square/fonts', 'files/font_square/backgrounds',
+    eval_dataset = OnlineFontSquare('files/font_square/clean_fonts', 'files/font_square/backgrounds',
                                     text_sampler=TextSampler(8, 32, (4, 7), exponent=0.5),
                                     length=args.num_samples_per_epoch)
 
@@ -169,8 +168,7 @@ def train():
         scheduler_specific_kwargs={"patience": args.lr_scheduler_patience}
     )
 
-    writer_id, optimizer, train_loader, eval_loader, lr_scheduler = accelerator.prepare(
-        writer_id, optimizer, train_loader, eval_loader, lr_scheduler)
+    writer_id, optimizer, train_loader, eval_loader, lr_scheduler = accelerator.prepare(writer_id, optimizer, train_loader, eval_loader, lr_scheduler)
 
     weight_dtype = torch.float32
     if accelerator.mixed_precision == "fp16":
@@ -201,14 +199,16 @@ def train():
     train_state = TrainState(global_step=0, epoch=0)
     accelerator.register_for_checkpointing(train_state)
     if args.resume_id:
-        accelerator.load_state()
-        accelerator.project_configuration.iteration = train_state.epoch
-
+        try:
+            accelerator.load_state()
+            accelerator.project_configuration.iteration = train_state.epoch
+        except FileNotFoundError as e:
+            logger.info(f"Checkpoint not found: {e}. Creating a new run")
+        
     ce_loss = torch.nn.CrossEntropyLoss(label_smoothing=0.1)
     accuracy = evaluate.load('accuracy')
 
-    progress_bar = tqdm(range(train_state.global_step, args.max_train_steps),
-                        disable=not accelerator.is_local_main_process)
+    progress_bar = tqdm(range(train_state.global_step, args.max_train_steps), disable=not accelerator.is_local_main_process)
     progress_bar.set_description("Steps")
 
     for epoch in range(train_state.epoch, args.epochs):
@@ -217,7 +217,7 @@ def train():
         train_loss = 0.
         train_accuracy = 0.
 
-        for step, batch in enumerate(train_loader):
+        for _, batch in enumerate(train_loader):
 
             with accelerator.accumulate(writer_id):
                 images = batch['images_bw'].to(weight_dtype)
@@ -227,8 +227,7 @@ def train():
 
                 loss = ce_loss(output, authors_id)
                 predicted_authors = torch.argmax(output, dim=1)
-                accuracy_value = accuracy.compute(predictions=predicted_authors.int(), references=authors_id.int())[
-                    'accuracy']
+                accuracy_value = accuracy.compute(predictions=predicted_authors.int(), references=authors_id.int())['accuracy']
 
                 if not torch.isfinite(loss):
                     logger.info("\nWARNING: non-finite loss")
@@ -280,16 +279,19 @@ def train():
                     _ = validation(eval_loader, writer_id, accelerator, weight_dtype, ce_loss, accuracy, 'ema')
                     ema_writer_id.restore(writer_id.parameters())
 
-            logger.info(f"Epoch {epoch} - Eval accuracy: {eval_accuracy}")
+                if eval_accuracy > train_state.best_eval:
+                    train_state.best_eval = eval_accuracy
+                    writer_id_to_save = accelerator.unwrap_model(writer_id)
+                    writer_id_to_save.save_pretrained(args.output_dir / f"model_{epoch:04d}")
+                    del writer_id_to_save
+                    logger.info(f"Epoch {epoch} - Best eval accuracy: {eval_accuracy}")
+                
+                train_state.last_eval = eval_accuracy
+
             accelerator.save_state()
 
-        if accelerator.is_main_process and epoch % args.model_save_interval == 0:
-            writer_id_to_save = accelerator.unwrap_model(writer_id)
-            writer_id_to_save.save_pretrained(args.output_dir / f"model_{epoch:04d}")
-            del writer_id_to_save
-
         accelerator.wait_for_everyone()
-        lr_scheduler.step(eval_accuracy)
+        lr_scheduler.step(train_state.last_eval)
 
     accelerator.wait_for_everyone()
     if accelerator.is_main_process:

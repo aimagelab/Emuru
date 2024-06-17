@@ -99,11 +99,10 @@ def train():
     parser.add_argument("--train_batch_size", type=int, default=16, help="train batch size")
     parser.add_argument("--eval_batch_size", type=int, default=32, help="eval batch size")
     parser.add_argument("--epochs", type=int, default=10000, help="number of epochs to train the model")
+    parser.add_argument("--eval_epochs", type=int, default=1, help="eval interval")
     parser.add_argument("--lr", type=float, default=1e-4, help="learning rate")
     parser.add_argument("--seed", type=int, default=24, help="random seed")
-    parser.add_argument('--model_save_interval', type=int, default=5, help="model save interval")
     parser.add_argument('--wandb_log_interval_steps', type=int, default=25, help="model save interval")
-    parser.add_argument("--eval_epochs", type=int, default=1, help="eval interval")
     parser.add_argument("--resume_id", type=str, default=None, help="resume from checkpoint")
     parser.add_argument("--vae_config", type=str, default='configs/vae/VAE_64x768.json', help='vae config path')
     parser.add_argument("--htr_path", type=str, default='results/8da9/model_1000', help='htr checkpoint path')
@@ -176,10 +175,10 @@ def train():
         weight_decay=args.adam_weight_decay,
         eps=args.adam_epsilon)
 
-    train_dataset = OnlineFontSquare('files/font_square/fonts', 'files/font_square/backgrounds',
+    train_dataset = OnlineFontSquare('files/font_square/clean_fonts', 'files/font_square/backgrounds',
                                      text_sampler=TextSampler(8, 32, (4, 7), exponent=0.5),
                                      length=args.num_samples_per_epoch)
-    eval_dataset = OnlineFontSquare('files/font_square/fonts', 'files/font_square/backgrounds',
+    eval_dataset = OnlineFontSquare('files/font_square/clean_fonts', 'files/font_square/backgrounds',
                                     text_sampler=TextSampler(8, 32, (4, 7), exponent=0.5),
                                     length=args.num_samples_per_epoch)
 
@@ -228,18 +227,20 @@ def train():
     train_state = TrainState(global_step=0, epoch=0)
     accelerator.register_for_checkpointing(train_state)
     if args.resume_id:
-        accelerator.load_state()
-        accelerator.project_configuration.iteration = train_state.epoch
+        try:
+            accelerator.load_state()
+            accelerator.project_configuration.iteration = train_state.epoch
+        except FileNotFoundError as e:
+            logger.info(f"Checkpoint not found: {e}. Creating a new run")
 
-    progress_bar = tqdm(range(train_state.global_step, args.max_train_steps),
-                        disable=not accelerator.is_local_main_process)
+    progress_bar = tqdm(range(train_state.global_step, args.max_train_steps), disable=not accelerator.is_local_main_process)
     progress_bar.set_description("Steps")
 
     for epoch in range(train_state.epoch, args.epochs):
         vae.train()
         train_loss = 0.
 
-        for step, batch in enumerate(train_loader):
+        for _, batch in enumerate(train_loader):
 
             with accelerator.autocast():
                 with accelerator.accumulate(vae):
@@ -299,8 +300,8 @@ def train():
                     accelerator.log(logs)
 
         train_state.epoch += 1
-        if epoch % args.eval_epochs == 0:
-            if accelerator.is_main_process:
+        if epoch % args.eval_epochs == 0 and accelerator.is_main_process:
+            with torch.no_grad():
                 eval_loss = validation(eval_loader, vae, accelerator, loss_fn, weight_dtype, 'eval')
                 eval_loss = broadcast(torch.tensor(eval_loss, device=accelerator.device), from_process=0)
 
@@ -310,11 +311,18 @@ def train():
                     _ = validation(eval_loader, vae, accelerator, loss_fn, weight_dtype, 'ema')
                     ema_vae.restore(vae.parameters())
 
-                logger.info(f"Epoch {epoch} - Eval loss: {eval_loss}")
-                accelerator.save_state()
+                if eval_loss < train_state.best_eval:
+                    train_state.best_eval = eval_loss.item()
+                    vae_model = accelerator.unwrap_model(vae)
+                    vae_model.save_pretrained(args.output_dir / f"model_{epoch:04d}")
+                    del vae_model
+                    logger.info(f"Epoch {epoch} - Best eval loss: {eval_loss}")
 
-            lr_scheduler.step(eval_loss)
+                train_state.last_eval = eval_loss.item()
 
+            accelerator.save_state()
+
+        lr_scheduler.step(eval_loss)
         if accelerator.is_main_process and epoch % args.model_save_interval == 0:
             vae_model = accelerator.unwrap_model(vae)
             vae_model.save_pretrained(args.output_dir / f"model_{epoch:04d}")

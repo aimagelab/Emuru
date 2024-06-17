@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 from models.htr import HTR
-from models.writer_id_old import WriterID
+from models.writer_id import WriterID
 from models.smooth_ce import SmoothCrossEntropyLoss
 from models.teacher_forcing import NoisyTeacherForcing
 import evaluate
@@ -31,6 +31,8 @@ class AutoencoderLoss(nn.Module):
         if htr_path is not None and htr_weight > 0:
             self.htr = HTR.from_pretrained(htr_path)
             self.htr.eval()
+            for param in self.htr.parameters():
+                param.requires_grad = False
         else:
             self.htr = None
 
@@ -38,6 +40,8 @@ class AutoencoderLoss(nn.Module):
         if writer_id_path is not None and self.writer_weight > 0:
             self.writer_id = WriterID.from_pretrained(writer_id_path)
             self.writer_id.eval()
+            for param in self.writer_id.parameters():
+                param.requires_grad = False
         else:
             self.writer_id = None
 

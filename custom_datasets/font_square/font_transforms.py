@@ -359,7 +359,7 @@ class RandomInvert:
 
     def __call__(self, sample):
         if random.random() > self.p:
-            sample['img'] = self.dilate(1 - sample['img'])
+            sample['img'] = 1 - sample['img']
         return sample
 
 
