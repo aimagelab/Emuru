@@ -16,13 +16,13 @@
 conda activate emuru
 
 export OMP_NUM_THREADS=16
-export SCRIPT=train_writer_id.py
+export SCRIPT=train_htr.py
 
 export SCRIPT_ARGS=" \
-    --output_dir /work/FoMo_AIISDH/scascianelli/2024_emuru/results_writer_id \
-    --logging_dir /work/FoMo_AIISDH/scascianelli/2024_emuru/results_writer_id \
-    --train_batch_size 256 \
-    --resume_id aaa0 \
+    --output_dir /work/FoMo_AIISDH/scascianelli/2024_emuru/results_htr \
+    --logging_dir /work/FoMo_AIISDH/scascianelli/2024_emuru/results_htr \
+    --train_batch_size 128 \
+    --resume_id bbb0 \
     "
 
 if [[ $SLURM_ARRAY_TASK_ID  -eq 0 ]]; then
