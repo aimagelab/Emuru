@@ -172,3 +172,7 @@ files/font_square/ext_fonts/
 files/pkl_db/iam_lines_test.pkl
 files/pkl_db/iam_lines_train.pkl
 models/lightning_vae
+files/font_square/backgrounds.tar.gz
+files/font_square/fonts.tar.gz
+github_emuru.pub
+github_emuru
