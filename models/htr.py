@@ -49,24 +49,27 @@ class HTR(ModelMixin, ConfigMixin):
                  htr_dropout: float = 0.1,
                  num_encoder_layers: int = 2,
                  num_decoder_layers: int = 4,
-                 
+                 only_head: bool = False,
                  ):
         super(HTR, self).__init__()
 
-        self.feature_extractor = Encoder(
-            in_channels=in_channels,
-            out_channels=latent_channels,
-            down_block_types=down_block_types,
-            block_out_channels=block_out_channels,
-            layers_per_block=layers_per_block,
-            act_fn=act_fn,
-            norm_num_groups=norm_num_groups,
-            double_z=False,
-            dropout=encoder_dropout,
-        )
+        self.only_head = only_head
+        if not self.only_head:
 
+            self.feature_extractor = Encoder(
+                in_channels=in_channels,
+                out_channels=latent_channels,
+                down_block_types=down_block_types,
+                block_out_channels=block_out_channels,
+                layers_per_block=layers_per_block,
+                act_fn=act_fn,
+                norm_num_groups=norm_num_groups,
+                double_z=False,
+                dropout=encoder_dropout,
+            )
+
+        
         self.quant_conv = nn.Conv2d(latent_channels, d_model, 1)
-
         # Letter classification
         self.text_embedding = nn.Embedding(alphabet_size, d_model)
         self.d_model = d_model
@@ -84,8 +87,13 @@ class HTR(ModelMixin, ConfigMixin):
         self.fc = nn.Linear(d_model, alphabet_size)
 
     def forward(self, x, tgt_logits, tgt_mask, tgt_key_padding_mask):
-        # Feature extraction
-        memory = self.feature_extractor(x)  # [16, 1, 64, 768] -> [16, 128, 8, 96]
+        if not self.only_head:
+            # Feature extraction
+            memory = self.feature_extractor(x)  # [B, 1, 64, 768] -> [B, 128, 8, 96]
+        else:
+            memory = x
+
+        # if latent htr then input is [B, 1, 8, 96]
         memory = self.quant_conv(memory)
 
         # Letter classification

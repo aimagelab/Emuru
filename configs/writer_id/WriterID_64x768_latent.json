@@ -1,0 +1,6 @@
+{
+  "num_writers": 115961,
+  "in_channels": 1,
+  "latent_channels": 128,
+  "only_head": true
+}

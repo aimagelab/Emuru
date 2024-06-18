@@ -56,7 +56,7 @@ def validation(eval_loader, vae, accelerator, loss_fn, weight_dtype, wandb_prefi
             z = posterior.sample()
             pred = vae_model.decode(z).sample
 
-            loss, log_dict, wandb_media_log = loss_fn(images=targets, reconstructions=pred, posteriors=posterior,
+            loss, log_dict, wandb_media_log = loss_fn(images=targets, z=z, reconstructions=pred, posteriors=posterior,
                                                       writers=writers, text_logits_s2s=text_logits_s2s,
                                                       text_logits_s2s_length=text_logits_s2s_unpadded_len,
                                                       tgt_key_padding_mask=tgt_key_padding_mask, source_mask=tgt_mask,
@@ -94,8 +94,8 @@ def validation(eval_loader, vae, accelerator, loss_fn, weight_dtype, wandb_prefi
 
 def train():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--output_dir", type=str, default='results', help="output directory")
-    parser.add_argument("--logging_dir", type=str, default='results', help="logging directory")
+    parser.add_argument("--output_dir", type=str, default='results_vae', help="output directory")
+    parser.add_argument("--logging_dir", type=str, default='results_vae', help="logging directory")
     parser.add_argument("--train_batch_size", type=int, default=16, help="train batch size")
     parser.add_argument("--eval_batch_size", type=int, default=32, help="eval batch size")
     parser.add_argument("--epochs", type=int, default=10000, help="number of epochs to train the model")
@@ -105,15 +105,20 @@ def train():
     parser.add_argument('--wandb_log_interval_steps', type=int, default=25, help="model save interval")
     parser.add_argument("--resume_id", type=str, default=None, help="resume from checkpoint")
     parser.add_argument("--vae_config", type=str, default='configs/vae/VAE_64x768.json', help='vae config path')
-    parser.add_argument("--htr_path", type=str, default='results/8da9/model_1000', help='htr checkpoint path')
-    parser.add_argument("--writer_id_path", type=str, default='results/b12a/model_4000', help='writerid config path')
     parser.add_argument("--report_to", type=str, default="wandb")
     parser.add_argument("--wandb_project_name", type=str, default="emuru_vae", help="wandb project name")
 
+    parser.add_argument("--htr_path", type=str, default='results/8da9/model_1000', help='htr checkpoint path')
+    parser.add_argument("--writer_id_path", type=str, default='results/b12a/model_4000', help='writerid config path')
+
+    parser.add_argument("--latent_htr_wid", type=str, default="True")
+    parser.add_argument("--htr_config", type=str, default='configs/htr/HTR_64x768_latent.json', help='config path')
+    parser.add_argument("--writer_id_config", type=str, default='configs/writer_id/WriterID_64x768_latent.json', help='config path')
+    
     parser.add_argument("--num_samples_per_epoch", type=int, default=None)
     parser.add_argument("--lr_scheduler", type=str, default="reduce_lr_on_plateau")
     parser.add_argument("--lr_scheduler_patience", type=int, default=10)
-    parser.add_argument("--use_ema", type=str, default="True")
+    parser.add_argument("--use_ema", type=str, default="False")
     parser.add_argument("--gradient_accumulation_steps", type=int, default=1)
     parser.add_argument("--mixed_precision", type=str, default="no")
     parser.add_argument("--checkpoints_total_limit", type=int, default=5)
@@ -121,6 +126,7 @@ def train():
     args = parser.parse_args()
 
     args.use_ema = args.use_ema == "True"
+    args.latent_htr_wid = args.latent_htr_wid == "True"
     args.adam_beta1 = 0.9
     args.adam_beta2 = 0.999
     args.adam_epsilon = 1e-8
@@ -160,8 +166,9 @@ def train():
         config_dict = json.load(f)
 
     vae = AutoencoderKL.from_config(config_dict)
+    vae.train()
     vae.requires_grad_(True)
-    args.total_params = vae.num_parameters(only_trainable=True)
+    args.vae_params = vae.num_parameters(only_trainable=True)
 
     if args.use_ema:
         ema_vae = vae.from_config(config_dict)
@@ -193,8 +200,11 @@ def train():
         scheduler_specific_kwargs={"patience": args.lr_scheduler_patience}
     )
 
-    loss_fn = AutoencoderLoss(alphabet=train_dataset.alphabet, htr_path=args.htr_path,
-                              writer_id_path=args.writer_id_path)
+    loss_fn = AutoencoderLoss(alphabet=train_dataset.alphabet, htr_path=args.htr_path, htr_config= args.htr_config,
+                              writer_id_path=args.writer_id_path, writer_id_config=args.writer_id_config, latent_htr_wid=args.latent_htr_wid)
+    args.htr_params = sum([p.numel() for p in loss_fn.htr.parameters()])
+    args.writer_id_params = sum([p.numel() for p in loss_fn.writer_id.parameters()])
+    args.total_params = args.vae_params + args.htr_params + args.writer_id_params
 
     vae, optimizer, train_loader, eval_loader, lr_scheduler, loss_fn = accelerator.prepare(
         vae, optimizer, train_loader, eval_loader, lr_scheduler, loss_fn)
@@ -222,7 +232,7 @@ def train():
     logger.info(f"  Instantaneous batch size per device = {args.train_batch_size}")
     logger.info(f"  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}")
     logger.info(f"  Gradient Accumulation steps = {args.gradient_accumulation_steps}")
-    logger.info(f"  Total parameters count = {args.total_params}")
+    logger.info(f"  Total parameters count = {args.total_params}. VAE: {args.vae_params}, HTR: {args.htr_params}, WriterID: {args.writer_id_params}")
 
     train_state = TrainState(global_step=0, epoch=0)
     accelerator.register_for_checkpointing(train_state)
@@ -263,7 +273,7 @@ def train():
                     else:
                         pred = vae.decode(z).sample
 
-                    loss, log_dict, _ = loss_fn(images=targets, reconstructions=pred, posteriors=posterior,
+                    loss, log_dict, _ = loss_fn(images=targets, z=z, reconstructions=pred, posteriors=posterior,
                                                 writers=writers, text_logits_s2s=text_logits_s2s,
                                                 text_logits_s2s_length=text_logits_s2s_unpadded_len,
                                                 tgt_key_padding_mask=tgt_key_padding_mask, source_mask=tgt_mask,

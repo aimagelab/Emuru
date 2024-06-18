@@ -82,7 +82,7 @@ def train():
     parser.add_argument("--eval_epochs", type=int, default=25, help="eval interval")
     parser.add_argument("--resume_id", type=str, default=None, help="resume from checkpoint")
     parser.add_argument("--run_id", type=str, default=uuid.uuid4().hex[:4], help="uuid of the run")
-    parser.add_argument("--htr_config", type=str, default='configs/writer_id/WriterID_64x768.json', help='config path')
+    parser.add_argument("--writer_id_config", type=str, default='configs/writer_id/WriterID_64x768.json', help='config path')
     parser.add_argument("--report_to", type=str, default="wandb")
     parser.add_argument("--wandb_project_name", type=str, default="emuru_writer_id", help="wandb project name")
 

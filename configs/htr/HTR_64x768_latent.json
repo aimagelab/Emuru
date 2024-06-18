@@ -1,0 +1,11 @@
+{
+  "alphabet_size": 167,
+  "latent_channels": 1,
+  "d_model": 128,
+  "use_tgt_pe": true,
+  "use_mem_pe": true,
+  "htr_dropout": 0.1,
+  "num_encoder_layers": 2,
+  "num_decoder_layers": 4,
+  "only_head": true
+}
