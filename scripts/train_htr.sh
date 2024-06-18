@@ -15,6 +15,8 @@
 . /usr/local/anaconda3/etc/profile.d/conda.sh
 conda activate emuru
 
+cd /work/FoMo_AIISDH/fquattrini/Emuru
+
 export OMP_NUM_THREADS=16
 export SCRIPT=train_htr.py
 
@@ -26,21 +28,21 @@ export SCRIPT_ARGS=" \
     "
 
 if [[ $SLURM_ARRAY_TASK_ID  -eq 0 ]]; then
-    accelerate launch --num_processes 1 $SCRIPT "$SCRIPT_ARGS"
+    /homes/$(whoami)/.conda/envs/emuru/bin/accelerate launch --num_processes 1 $SCRIPT "$SCRIPT_ARGS"
 
 elif [[ $SLURM_ARRAY_TASK_ID  -eq 1 ]]; then
-    accelerate launch --num_processes 1 $SCRIPT "$SCRIPT_ARGS"
+    /homes/$(whoami)/.conda/envs/emuru/bin/accelerate launch --num_processes 1 $SCRIPT "$SCRIPT_ARGS"
 
 elif [[ $SLURM_ARRAY_TASK_ID  -eq 2 ]]; then
-    accelerate launch --num_processes 1 $SCRIPT "$SCRIPT_ARGS"
+    /homes/$(whoami)/.conda/envs/emuru/bin/accelerate launch --num_processes 1 $SCRIPT "$SCRIPT_ARGS"
 
 elif [[ $SLURM_ARRAY_TASK_ID  -eq 3 ]]; then
-    accelerate launch --num_processes 1 $SCRIPT "$SCRIPT_ARGS"
+    /homes/$(whoami)/.conda/envs/emuru/bin/accelerate launch --num_processes 1 $SCRIPT "$SCRIPT_ARGS"
 
 elif [[ $SLURM_ARRAY_TASK_ID  -eq 4 ]]; then
-    accelerate launch --num_processes 1 $SCRIPT "$SCRIPT_ARGS"
+    /homes/$(whoami)/.conda/envs/emuru/bin/accelerate launch --num_processes 1 $SCRIPT "$SCRIPT_ARGS"
 
 elif [[ $SLURM_ARRAY_TASK_ID  -eq 5 ]]; then
-    accelerate launch --num_processes 1 $SCRIPT "$SCRIPT_ARGS"
+    /homes/$(whoami)/.conda/envs/emuru/bin/accelerate launch --num_processes 1 $SCRIPT "$SCRIPT_ARGS"
 
 fi
