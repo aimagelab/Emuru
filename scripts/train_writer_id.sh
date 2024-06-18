@@ -28,21 +28,21 @@ export SCRIPT_ARGS=" \
     "
 
 if [[ $SLURM_ARRAY_TASK_ID  -eq 0 ]]; then
-    /homes/$(whoami)/.conda/envs/emuru/bin/accelerate launch --num_processes 1 $SCRIPT "$SCRIPT_ARGS"
+    /homes/$(whoami)/.conda/envs/emuru/bin/accelerate launch --num_processes 1 $SCRIPT $SCRIPT_ARGS
 
 elif [[ $SLURM_ARRAY_TASK_ID  -eq 1 ]]; then
-    /homes/$(whoami)/.conda/envs/emuru/bin/accelerate launch --num_processes 1 $SCRIPT "$SCRIPT_ARGS"
+    /homes/$(whoami)/.conda/envs/emuru/bin/accelerate launch --num_processes 1 $SCRIPT $SCRIPT_ARGS
 
 elif [[ $SLURM_ARRAY_TASK_ID  -eq 2 ]]; then
-    /homes/$(whoami)/.conda/envs/emuru/bin/accelerate launch --num_processes 1 $SCRIPT "$SCRIPT_ARGS"
+    /homes/$(whoami)/.conda/envs/emuru/bin/accelerate launch --num_processes 1 $SCRIPT $SCRIPT_ARGS
 
 elif [[ $SLURM_ARRAY_TASK_ID  -eq 3 ]]; then
-    /homes/$(whoami)/.conda/envs/emuru/bin/accelerate launch --num_processes 1 $SCRIPT "$SCRIPT_ARGS"
+    /homes/$(whoami)/.conda/envs/emuru/bin/accelerate launch --num_processes 1 $SCRIPT $SCRIPT_ARGS
 
 elif [[ $SLURM_ARRAY_TASK_ID  -eq 4 ]]; then
-    /homes/$(whoami)/.conda/envs/emuru/bin/accelerate launch --num_processes 1 $SCRIPT "$SCRIPT_ARGS"
+    /homes/$(whoami)/.conda/envs/emuru/bin/accelerate launch --num_processes 1 $SCRIPT $SCRIPT_ARGS
 
 elif [[ $SLURM_ARRAY_TASK_ID  -eq 5 ]]; then
-    /homes/$(whoami)/.conda/envs/emuru/bin/accelerate launch --num_processes 1 $SCRIPT "$SCRIPT_ARGS"
+    /homes/$(whoami)/.conda/envs/emuru/bin/accelerate launch --num_processes 1 $SCRIPT $SCRIPT_ARGS
 
 fi
