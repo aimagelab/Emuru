@@ -8,6 +8,7 @@ from random import sample, randint
 import string
 import cv2
 import json
+from pathlib import Path
 
 try:
     terminal_columns = os.get_terminal_size().columns
@@ -23,7 +24,14 @@ class Render:
         self.font_size = font_size
         self.height = height
         self.width = width
-        self.font = ImageFont.truetype(self.font_path, self.font_size)
+
+        self.font_path = str(Path(font_path).absolute())
+
+        try:
+            self.font = ImageFont.truetype(self.font_path, self.font_size)
+        except OSError:
+            raise OSError(f'Error: {font_path}')
+        
         self.charset = charset
     
     def calibrate(self, text=None, threshold=0.7, height=128, width=2500):
