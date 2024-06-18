@@ -111,7 +111,7 @@ def train():
     parser.add_argument("--htr_path", type=str, default='results/8da9/model_1000', help='htr checkpoint path')
     parser.add_argument("--writer_id_path", type=str, default='results/b12a/model_4000', help='writerid config path')
 
-    parser.add_argument("--latent_htr_wid", type=str, default="True")
+    parser.add_argument("--latent_htr_wid", type=str, default="False")
     parser.add_argument("--htr_config", type=str, default='configs/htr/HTR_64x768_latent.json', help='config path')
     parser.add_argument("--writer_id_config", type=str, default='configs/writer_id/WriterID_64x768_latent.json', help='config path')
     
