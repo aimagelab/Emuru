@@ -58,8 +58,8 @@ class RenderImage(object):
                 render.calibrate(calib_text, calib_threshold, calib_h)
             return render
         
-        if Path('files/font_square/.pkl').exists():
-            with open('files/font_square/.pkl', 'rb') as f:
+        if Path('files/font_square/fonts_data.pkl').exists():
+            with open('files/font_square/fonts_data.pkl', 'rb') as f:
                 fonts_data = pickle.load(f)
 
             self.renderers = []
