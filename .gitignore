@@ -164,6 +164,7 @@ cython_debug/
 .vscode
 .tmp/
 wandb/
+files/
 files/checkpoints/
 files/font_square/backgrounds/
 files/font_square/fonts/

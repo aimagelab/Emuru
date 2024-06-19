@@ -9,6 +9,7 @@ import string
 import cv2
 import json
 from pathlib import Path
+from io import BytesIO
 
 try:
     terminal_columns = os.get_terminal_size().columns
@@ -19,7 +20,7 @@ class Render:
     ink_path = None
     pag_path = None
 
-    def __init__(self, font_path, height=None, width=None, font_size=64, charset=None):
+    def __init__(self, font_path, height=None, width=None, font_size=64, charset=None, font=None):
         self.font_path = font_path
         self.font_size = font_size
         self.height = height
@@ -27,10 +28,14 @@ class Render:
 
         self.font_path = str(Path(font_path).absolute())
 
-        try:
-            self.font = ImageFont.truetype(self.font_path, self.font_size)
-        except OSError:
-            raise OSError(f'Error: {self.font_path}')
+        if font is None:
+            try:
+                self.font = ImageFont.truetype(self.font_path, self.font_size)
+            except OSError:
+                raise OSError(f'Error: {self.font_path}')
+        else:
+            self.font = ImageFont.truetype(BytesIO(font), self.font_size)
+
         
         self.charset = charset
     
