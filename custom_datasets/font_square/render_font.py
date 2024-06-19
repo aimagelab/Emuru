@@ -30,7 +30,7 @@ class Render:
         try:
             self.font = ImageFont.truetype(self.font_path, self.font_size)
         except OSError:
-            raise OSError(f'Error: {font_path}')
+            raise OSError(f'Error: {self.font_path}')
         
         self.charset = charset
     

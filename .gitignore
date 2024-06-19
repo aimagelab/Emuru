@@ -162,6 +162,7 @@ cython_debug/
 *.png
 /.idea
 .vscode
+.tmp/
 wandb/
 files/checkpoints/
 files/font_square/backgrounds/
