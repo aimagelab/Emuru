@@ -74,21 +74,6 @@ class OnlineFontSquare(Dataset):
     def __init__(self, fonts, backgrounds, text_sampler=None, transform=None, length=None):
         fonts = Path(fonts) if isinstance(fonts, str) else fonts
         backgrounds = Path(backgrounds) if isinstance(backgrounds, str) else backgrounds
-        extract_path = 'files/font_square/extracted_fonts'
-
-        if isinstance(fonts, Path) and fonts.suffix == '.gz':
-            with tarfile.open(fonts, 'r:gz') as tar:
-                tar.extractall(path=extract_path)  
-            fonts = Path(extract_path)
-
-        if isinstance(fonts, Path) and fonts.suffix == '.gz':
-            with tarfile.open(fonts, 'r:gz') as tar:
-                members = tar.getmembers()
-                total = len(members)
-                for i, member in enumerate(members, start=1):
-                    tar.extract(member, path=extract_path)
-                    print(f"Progress: {i}/{total}")
-            fonts = Path(extract_path)
 
         if isinstance(fonts, Path) and fonts.is_dir():
             self.fonts = sorted(list(fonts.glob('*.?tf')))
