@@ -59,6 +59,7 @@ class RenderImage(object):
             return render
         
         if Path('files/font_square/fonts_data.pkl').exists():
+            print(f'Loading fonts data from pickle file...')
             with open('files/font_square/fonts_data.pkl', 'rb') as f:
                 fonts_data = pickle.load(f)
 
