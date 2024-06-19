@@ -86,8 +86,6 @@ def train():
     parser.add_argument("--report_to", type=str, default="wandb")
     parser.add_argument("--wandb_project_name", type=str, default="emuru_writer_id", help="wandb project name")
 
-    parser.add_argument("--fonts_path", type=str, default='files/font_square/fonts.tar.gz', help="can be .tar.gz or font folder")
-
     parser.add_argument("--num_samples_per_epoch", type=int, default=None)
     parser.add_argument("--lr_scheduler", type=str, default="reduce_lr_on_plateau")
     parser.add_argument("--lr_scheduler_patience", type=int, default=50)
@@ -152,7 +150,7 @@ def train():
         weight_decay=args.adam_weight_decay,
         eps=args.adam_epsilon)
 
-    train_dataset = OnlineFontSquare(args.fonts_path, 'files/font_square/backgrounds',
+    train_dataset = OnlineFontSquare('files/font_square/clean_fonts', 'files/font_square/backgrounds',
                                      text_sampler=TextSampler(8, 32, (4, 7), exponent=0.5),
                                      length=args.num_samples_per_epoch)
     eval_dataset = OnlineFontSquare('files/font_square/clean_fonts', 'files/font_square/backgrounds',
