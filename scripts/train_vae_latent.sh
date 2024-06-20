@@ -27,7 +27,7 @@ export SCRIPT_ARGS=" \
     --logging_dir /work/FoMo_AIISDH/scascianelli/2024_emuru/results_vae_latent \
     --latent_htr_wid True \
     --train_batch_size 128 \
-    --resume_id bbb0 \
+    --resume_id vvv0 \
     "
 
 if [[ $SLURM_ARRAY_TASK_ID  -eq 0 ]]; then
