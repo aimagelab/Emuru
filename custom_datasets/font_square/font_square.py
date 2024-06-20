@@ -71,7 +71,7 @@ def collate_fn(batch):
 
 
 class OnlineFontSquare(Dataset):
-    def __init__(self, fonts, backgrounds, text_sampler=None, transform=None, length=None):
+    def __init__(self, fonts, backgrounds, text_sampler=None, transform=None, length=None, load_font_into_mem=False):
         fonts = Path(fonts) if isinstance(fonts, str) else fonts
         backgrounds = Path(backgrounds) if isinstance(backgrounds, str) else backgrounds
 
@@ -95,7 +95,7 @@ class OnlineFontSquare(Dataset):
 
         self.text_sampler = text_sampler
         self.transform = T.Compose([
-            FT.RenderImage(self.fonts, calib_threshold=0.8, pad=20, verbose=True),
+            FT.RenderImage(self.fonts, calib_threshold=0.8, pad=20, verbose=True, load_font_into_mem=load_font_into_mem),
             FT.RandomRotation(3, fill=1, p=0.5),
             FT.RandomWarping(grid_shape=(5, 2), p=0.15),
             FT.GaussianBlur(kernel_size=3, p=0.5),

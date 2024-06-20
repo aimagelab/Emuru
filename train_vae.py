@@ -123,9 +123,12 @@ def train():
     parser.add_argument("--mixed_precision", type=str, default="no")
     parser.add_argument("--checkpoints_total_limit", type=int, default=5)
 
+    parser.add_argument("--load_font_into_mem", type=str, default="False")
+
     args = parser.parse_args()
 
     args.use_ema = args.use_ema == "True"
+    args.load_font_into_mem = args.load_font_into_mem == "True"
     args.latent_htr_wid = args.latent_htr_wid == "True"
     args.adam_beta1 = 0.9
     args.adam_beta2 = 0.999
@@ -184,10 +187,10 @@ def train():
 
     train_dataset = OnlineFontSquare('files/font_square/clean_fonts', 'files/font_square/backgrounds',
                                      text_sampler=TextSampler(8, 32, (4, 7), exponent=0.5),
-                                     length=args.num_samples_per_epoch)
+                                     length=args.num_samples_per_epoch, load_font_into_mem=args.load_font_into_mem)
     eval_dataset = OnlineFontSquare('files/font_square/clean_fonts', 'files/font_square/backgrounds',
                                     text_sampler=TextSampler(8, 32, (4, 7), exponent=0.5),
-                                    length=args.num_samples_per_epoch)
+                                    length=args.num_samples_per_epoch, load_font_into_mem=args.load_font_into_mem)
 
     train_loader = DataLoader(train_dataset, batch_size=args.train_batch_size, shuffle=True,
                               collate_fn=collate_fn, num_workers=4, persistent_workers=True)

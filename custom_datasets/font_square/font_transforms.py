@@ -30,7 +30,8 @@ def mask_coords(mask):
 
 
 class RenderImage(object):
-    def __init__(self, fonts_path, height=None, width=None, calib_text=None, calib_threshold=0.7, calib_h=128, pad=0, verbose=False):
+    def __init__(self, fonts_path, height=None, width=None, calib_text=None, calib_threshold=0.7, calib_h=128, pad=0, verbose=False, 
+                 load_font_into_mem=False):
         self.width = width
         self.height = height
         self.pad = pad
@@ -49,36 +50,16 @@ class RenderImage(object):
         with open(fonts_charset_path, 'r') as f:
             fonts_charset = json.load(f)
 
-        def render_fn(font_path, font=None):
+        def render_fn(font_path, load_font_into_mem):
             font_size = fonts_data[font_path.name] if font_path.name in fonts_data else 64
             charset = fonts_charset[font_path.name]['charset'] if font_path.name in fonts_charset else []
             charset = set(charset) if len(charset) > 0 else None
-            render = Render(font_path, height, width, font_size, charset, font)
+            render = Render(font_path, height, width, font_size, charset, load_font_into_mem)
             if font_path.name not in fonts_data:
                 render.calibrate(calib_text, calib_threshold, calib_h)
             return render
         
-        if Path('files/font_square/fonts_data.pkl').exists():
-            print(f'Loading fonts data from pickle file...')
-            with open('files/font_square/fonts_data.pkl', 'rb') as f:
-                fonts_data = pickle.load(f)
-
-            self.renderers = []
-            for path, font in tqdm(fonts_data.items(), desc='Loading fonts', disable=not verbose):
-                self.renderers.append(render_fn(path, font))
-        else:
-            self.renderers = [render_fn(path, None) for path in tqdm(fonts_path, desc='Loading fonts', disable=not verbose)]
-
-        #if not Path('files/font_square/renderers.pkl').exists():
-        #    self.renderers = [render_fn(path) for path in tqdm(fonts_path, desc='Loading fonts', disable=not verbose)]
-        #    # Save the renderers object into a pickle file
-        #    with open('files/font_square/renderers.pkl', 'wb') as f:
-        #        pickle.dump(self.renderers, f)
-        #else:
-        #    print(f'Loading renderers from pickle file...')
-        #    with open('files/font_square/renderers.pkl', 'rb') as f:
-        #        self.renderers = pickle.load(f)
-
+        self.renderers = [render_fn(path, load_font_into_mem) for path in tqdm(fonts_path, desc='Loading fonts', disable=not verbose)]
         self.fonts_to_ids = {path.name: i for i, path in enumerate(fonts_path)}
         self.ids_to_fonts = {i: path.name for i, path in enumerate(fonts_path)}
 
