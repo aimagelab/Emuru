@@ -12,7 +12,7 @@ import msgpack
 from pathlib import Path
 from collections import Counter
 from itertools import pairwise
-import tarfile
+import json
 
 from ..alphabet import Alphabet
 from ..constants import (
@@ -22,6 +22,8 @@ from ..constants import (
     FONT_SQUARE_CHARSET
 )
 from ..subsequent_mask import subsequent_mask
+from .render_font import Render
+import tqdm
 
 
 def pad_images(images, padding_value=1):
@@ -70,19 +72,47 @@ def collate_fn(batch):
     }
 
 
-class OnlineFontSquare(Dataset):
-    def __init__(self, fonts, backgrounds, text_sampler=None, transform=None, length=None, load_font_into_mem=False):
-        fonts = Path(fonts) if isinstance(fonts, str) else fonts
-        backgrounds = Path(backgrounds) if isinstance(backgrounds, str) else backgrounds
 
-        if isinstance(fonts, Path) and fonts.is_dir():
-            self.fonts = sorted(list(fonts.glob('*.?tf')))
-        elif isinstance(fonts, Path) and fonts.is_file():
-            self.fonts = [fonts]
-        elif isinstance(fonts, list):
-            self.fonts = fonts
-        else:
-            raise ValueError(f'Fonts must be a directory or a list of paths. Got {type(fonts)}')
+def make_renderers(fonts, height=None, width=None, calib_text=None, calib_threshold=0.7, calib_h=128, verbose=False, load_font_into_mem=False):
+    fonts = Path(fonts) if isinstance(fonts, str) else fonts
+    if isinstance(fonts, Path) and fonts.is_dir():
+            fonts = sorted(list(fonts.glob('*.?tf')))
+    elif isinstance(fonts, Path) and fonts.is_file():
+        fonts = [fonts]
+    elif isinstance(fonts, list):
+        fonts = fonts
+    else:
+        raise ValueError(f'Fonts must be a directory or a list of paths. Got {type(fonts)}')
+    
+    fonts_data_path = fonts[0].parent / 'fonts_sizes.json'
+    if fonts_data_path.exists():
+        with open(fonts_data_path, 'r') as f:
+            fonts_data = json.load(f)
+    else:
+        fonts_data = {}
+
+    fonts_charset_path = fonts[0].parent / 'fonts_charsets.json'
+    with open(fonts_charset_path, 'r') as f:
+        fonts_charset = json.load(f)
+
+    def render_fn(font_path, load_font_into_mem):
+        font_size = fonts_data[font_path.name] if font_path.name in fonts_data else 64
+        charset = fonts_charset[font_path.name]['charset'] if font_path.name in fonts_charset else []
+        charset = set(charset) if len(charset) > 0 else None
+        render = Render(font_path, height, width, font_size, charset, load_font_into_mem)
+        if font_path.name not in fonts_data:
+            render.calibrate(calib_text, calib_threshold, calib_h)
+        return render
+    
+    renderers = [render_fn(path, load_font_into_mem) for path in tqdm(fonts, desc='Loading fonts', disable=not verbose)]
+    
+    return fonts, renderers
+
+
+
+class OnlineFontSquare(Dataset):
+    def __init__(self, fonts, backgrounds, text_sampler=None, transform=None, length=None, load_font_into_mem=False, renderers=None):
+        backgrounds = Path(backgrounds) if isinstance(backgrounds, str) else backgrounds
 
         if isinstance(backgrounds, Path) and backgrounds.is_dir():
             backgrounds = [p for p in backgrounds.rglob('*') if p.suffix in ('.jpg', '.png', '.jpeg')]
@@ -92,10 +122,12 @@ class OnlineFontSquare(Dataset):
             backgrounds = backgrounds
         else:
             raise ValueError(f'Backgrounds must be a directory or a list of paths. Got {type(backgrounds)}')
+        
+        self.fonts, renderers = make_renderers(fonts, calib_threshold=0.8, verbose=True, load_font_into_mem=load_font_into_mem)
 
         self.text_sampler = text_sampler
         self.transform = T.Compose([
-            FT.RenderImage(self.fonts, calib_threshold=0.8, pad=20, verbose=True, load_font_into_mem=load_font_into_mem),
+            FT.RenderImage(self.fonts, calib_threshold=0.8, pad=20, verbose=True, load_font_into_mem=load_font_into_mem, renderers=renderers),
             FT.RandomRotation(3, fill=1, p=0.5),
             FT.RandomWarping(grid_shape=(5, 2), p=0.15),
             FT.GaussianBlur(kernel_size=3, p=0.5),

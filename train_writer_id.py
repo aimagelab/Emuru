@@ -24,6 +24,7 @@ from utils import TrainState
 from custom_datasets import OnlineFontSquare, TextSampler, collate_fn
 from custom_datasets.constants import END_OF_SEQUENCE
 from models.writer_id import WriterID
+from custom_datasets.font_square.font_square import make_renderers
 
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
@@ -154,12 +155,13 @@ def train():
         eps=args.adam_epsilon)
     
     text_sampler = TextSampler(8, 32, (4, 7), exponent=0.5)
+    renderers = make_renderers('files/font_square/clean_fonts', calib_threshold=0.8, verbose=True, load_font_into_mem=args.load_font_into_mem)
     train_dataset = OnlineFontSquare('files/font_square/clean_fonts', 'files/font_square/backgrounds',
-                                     text_sampler=text_sampler,
-                                     length=args.num_samples_per_epoch, load_font_into_mem=args.load_font_into_mem)
+                                     text_sampler=text_sampler, length=args.num_samples_per_epoch, load_font_into_mem=args.load_font_into_mem, 
+                                     renderers=renderers)
     eval_dataset = OnlineFontSquare('files/font_square/clean_fonts', 'files/font_square/backgrounds',
-                                    text_sampler=text_sampler,
-                                    length=args.num_samples_per_epoch, load_font_into_mem=args.load_font_into_mem)
+                                    text_sampler=text_sampler, length=args.num_samples_per_epoch, load_font_into_mem=args.load_font_into_mem, 
+                                    renderers=renderers)
 
     train_loader = DataLoader(train_dataset, batch_size=args.train_batch_size, shuffle=True,
                               collate_fn=collate_fn, num_workers=4, persistent_workers=True)
