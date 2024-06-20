@@ -97,7 +97,7 @@ def train():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output_dir", type=str, default='results_vae', help="output directory")
     parser.add_argument("--logging_dir", type=str, default='results_vae', help="logging directory")
-    parser.add_argument("--train_batch_size", type=int, default=16, help="train batch size")
+    parser.add_argument("--train_batch_size", type=int, default=32, help="train batch size")
     parser.add_argument("--eval_batch_size", type=int, default=32, help="eval batch size")
     parser.add_argument("--epochs", type=int, default=10000, help="number of epochs to train the model")
     parser.add_argument("--eval_epochs", type=int, default=1, help="eval interval")
@@ -112,7 +112,7 @@ def train():
     parser.add_argument("--htr_path", type=str, default='results/8da9/model_1000', help='htr checkpoint path')
     parser.add_argument("--writer_id_path", type=str, default='results/b12a/model_4000', help='writerid config path')
 
-    parser.add_argument("--latent_htr_wid", type=str, default="False")
+    parser.add_argument("--latent_htr_wid", type=str, default="True")
     parser.add_argument("--htr_config", type=str, default='configs/htr/HTR_64x768_latent.json', help='config path')
     parser.add_argument("--writer_id_config", type=str, default='configs/writer_id/WriterID_64x768_latent.json', help='config path')
     

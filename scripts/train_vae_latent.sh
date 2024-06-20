@@ -26,7 +26,7 @@ export SCRIPT_ARGS=" \
     --output_dir /work/FoMo_AIISDH/scascianelli/2024_emuru/results_vae_latent \
     --logging_dir /work/FoMo_AIISDH/scascianelli/2024_emuru/results_vae_latent \
     --latent_htr_wid True \
-    --train_batch_size 128 \
+    --train_batch_size 32 \
     --resume_id vvv0 \
     "
 
