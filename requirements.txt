@@ -13,3 +13,4 @@ pillow~=10.2.0
 opencv-python~=4.9.0.80
 msgpack~=1.0.8
 evaluate~=0.4.2
+scikit-learn~=1.5.0
