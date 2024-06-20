@@ -15,6 +15,7 @@ from itertools import pairwise
 import json
 from tqdm import tqdm
 import math
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from ..alphabet import Alphabet
@@ -87,7 +88,8 @@ def get_fonts(fonts_path):
     return fonts
 
 
-def make_renderers(fonts, height=None, width=None, calib_text=None, calib_threshold=0.7, calib_h=128, verbose=False, load_font_into_mem=False):
+def make_renderers(fonts, height=None, width=None, calib_text=None, calib_threshold=0.7, calib_h=128, verbose=False, load_font_into_mem=False, 
+                   num_threads=8):
     fonts = get_fonts(fonts)
     fonts_data_path = fonts[0].parent / 'fonts_sizes.json'
     if fonts_data_path.exists():
@@ -125,17 +127,16 @@ def make_renderers(fonts, height=None, width=None, calib_text=None, calib_thresh
             
             for future in tqdm(as_completed(futures), total=len(futures), desc='Loading fonts', disable=not verbose):
                 renderers.extend(future.result())
+        
+        return renderers
     
     def chunk_list(lst, num_threads):
         batch_size = math.ceil(len(lst) / num_threads)
         for i in range(0, len(lst), batch_size):
             yield lst[i:i + batch_size]
 
-    num_threads = 8
-
     renderers = load_fonts_parallel(fonts, load_font_into_mem, num_threads, verbose)
-    
-    # renderers = [render_fn(path, load_font_into_mem) for path in tqdm(fonts, desc='Loading fonts', disable=not verbose)]
+    # renderers = [render_fn(path, load_font_into_mem) for path in tqdm(fonts, desc='Loading fonts', disable=not verbose)]  # no threads
     
     return renderers
 
