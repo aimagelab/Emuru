@@ -72,8 +72,21 @@ def collate_fn(batch):
     }
 
 
+def get_fonts(fonts_path):
+    fonts = Path(fonts_path) if isinstance(fonts_path, str) else fonts_path
+    if isinstance(fonts, Path) and fonts.is_dir():
+        fonts = sorted(list(fonts.glob('*.?tf')))
+    elif isinstance(fonts, Path) and fonts.is_file():
+        fonts = [fonts]
+    elif isinstance(fonts, list):
+        fonts = fonts
+    else:
+        raise ValueError(f'Fonts must be a directory or a list of paths. Got {type(fonts)}')
+    return fonts
+
 
 def make_renderers(fonts, height=None, width=None, calib_text=None, calib_threshold=0.7, calib_h=128, verbose=False, load_font_into_mem=False):
+    fonts = get_fonts(fonts)
     fonts_data_path = fonts[0].parent / 'fonts_sizes.json'
     if fonts_data_path.exists():
         with open(fonts_data_path, 'r') as f:
@@ -112,22 +125,13 @@ class OnlineFontSquare(Dataset):
         else:
             raise ValueError(f'Backgrounds must be a directory or a list of paths. Got {type(backgrounds)}')
         
-        fonts = Path(fonts) if isinstance(fonts, str) else fonts
-        if isinstance(fonts, Path) and fonts.is_dir():
-            self.fonts = sorted(list(fonts.glob('*.?tf')))
-        elif isinstance(fonts, Path) and fonts.is_file():
-            self.fonts = [fonts]
-        elif isinstance(fonts, list):
-            self.fonts = fonts
-        else:
-            raise ValueError(f'Fonts must be a directory or a list of paths. Got {type(fonts)}')
-        
+        self.fonts = get_fonts(fonts)
         if renderers is None:
             renderers = make_renderers(fonts, calib_threshold=0.8, verbose=True, load_font_into_mem=load_font_into_mem)
 
         self.text_sampler = text_sampler
         self.transform = T.Compose([
-            FT.RenderImage(self.fonts, calib_threshold=0.8, pad=20, verbose=True, load_font_into_mem=load_font_into_mem, renderers=renderers),
+            FT.RenderImage(self.fonts, pad=20, renderers=renderers),
             FT.RandomRotation(3, fill=1, p=0.5),
             FT.RandomWarping(grid_shape=(5, 2), p=0.15),
             FT.GaussianBlur(kernel_size=3, p=0.5),

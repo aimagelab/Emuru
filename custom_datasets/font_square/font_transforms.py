@@ -30,14 +30,8 @@ def mask_coords(mask):
 
 
 class RenderImage(object):
-    def __init__(self, fonts_path, height=None, width=None, calib_text=None, calib_threshold=0.7, calib_h=128, pad=0, verbose=False, 
-                 load_font_into_mem=False, renderers=None):
-        self.width = width
-        self.height = height
+    def __init__(self, fonts_path, pad=0, renderers=None):
         self.pad = pad
-        self.calib_text = calib_text
-        self.calib_threshold = calib_threshold
-        self.calib_h = calib_h
 
         fonts_data_path = fonts_path[0].parent / 'fonts_sizes.json'
         if fonts_data_path.exists():
@@ -46,24 +40,7 @@ class RenderImage(object):
         else:
             fonts_data = {}
 
-        fonts_charset_path = fonts_path[0].parent / 'fonts_charsets.json'
-        with open(fonts_charset_path, 'r') as f:
-            fonts_charset = json.load(f)
-
-        if renderers is None:
-            def render_fn(font_path, load_font_into_mem):
-                font_size = fonts_data[font_path.name] if font_path.name in fonts_data else 64
-                charset = fonts_charset[font_path.name]['charset'] if font_path.name in fonts_charset else []
-                charset = set(charset) if len(charset) > 0 else None
-                render = Render(font_path, height, width, font_size, charset, load_font_into_mem)
-                if font_path.name not in fonts_data:
-                    render.calibrate(calib_text, calib_threshold, calib_h)
-                return render
-            
-            self.renderers = [render_fn(path, load_font_into_mem) for path in tqdm(fonts_path, desc='Loading fonts', disable=not verbose)]
-        else:
-            self.renderers = renderers
-            
+        self.renderers = renderers
         self.fonts_to_ids = {path.name: i for i, path in enumerate(fonts_path)}
         self.ids_to_fonts = {i: path.name for i, path in enumerate(fonts_path)}
 
