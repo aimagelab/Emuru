@@ -99,7 +99,7 @@ def train():
     parser.add_argument("--mixed_precision", type=str, default="no")
     parser.add_argument("--checkpoints_total_limit", type=int, default=5)
 
-    parser.add_argument("--load_font_into_mem", type=str, default="False")
+    parser.add_argument("--load_font_into_mem", type=str, default="True")
 
     args = parser.parse_args()
 

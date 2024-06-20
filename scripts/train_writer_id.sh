@@ -7,6 +7,8 @@
 #SBATCH --mem=38G
 #SBATCH --constraint="gpu_A40_48G|gpu_RTX6000_24G|gpu_RTXA5000_24G"
 #SBATCH --nodes=1
+#SBATCH --ntasks=1              
+#SBATCH --cpus-per-task=4
 #SBATCH --gres=gpu:1
 #SBATCH --time=1-00:00:00
 #SBATCH -J writer_id_training

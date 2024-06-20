@@ -30,7 +30,7 @@ def mask_coords(mask):
 
 
 class RenderImage(object):
-    def __init__(self, fonts_path, pad=0, renderers=None):
+    def __init__(self, fonts_path, renderers, pad=0):
         self.pad = pad
 
         fonts_data_path = fonts_path[0].parent / 'fonts_sizes.json'
