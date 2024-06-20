@@ -11,7 +11,7 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --gres=gpu:1
 #SBATCH --time=1-00:00:00
-#SBATCH -J htr_training
+#SBATCH -J vae_latent_trainings
 #SBATCH --array=0-5%1
 
 . /usr/local/anaconda3/etc/profile.d/conda.sh
@@ -20,11 +20,12 @@ conda activate emuru
 cd /work/FoMo_AIISDH/fquattrini/Emuru
 
 export OMP_NUM_THREADS=16
-export SCRIPT=train_htr.py
+export SCRIPT=train_vae.py
 
 export SCRIPT_ARGS=" \
-    --output_dir /work/FoMo_AIISDH/scascianelli/2024_emuru/results_htr \
-    --logging_dir /work/FoMo_AIISDH/scascianelli/2024_emuru/results_htr \
+    --output_dir /work/FoMo_AIISDH/scascianelli/2024_emuru/results_vae_latent \
+    --logging_dir /work/FoMo_AIISDH/scascianelli/2024_emuru/results_vae_latent \
+    --latent_htr_wid True \
     --train_batch_size 128 \
     --resume_id bbb0 \
     "
