@@ -6,6 +6,7 @@ import math
 from tqdm.auto import tqdm
 import uuid
 import json
+import gc
 
 import torch
 from torch.utils.data import DataLoader
@@ -309,6 +310,7 @@ def train():
 
         accelerator.wait_for_everyone()
         lr_scheduler.step(train_state.last_eval)
+        gc.collect()
 
     accelerator.wait_for_everyone()
     if accelerator.is_main_process:
