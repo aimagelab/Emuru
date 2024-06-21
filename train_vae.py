@@ -339,11 +339,6 @@ def train():
             accelerator.save_state()
 
         lr_scheduler.step(eval_loss)
-        if accelerator.is_main_process and epoch % args.model_save_interval == 0:
-            vae_model = accelerator.unwrap_model(vae)
-            vae_model.save_pretrained(args.output_dir / f"model_{epoch:04d}")
-            del vae_model
-
         accelerator.wait_for_everyone()
 
     accelerator.wait_for_everyone()

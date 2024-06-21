@@ -89,7 +89,7 @@ def train():
 
     parser.add_argument("--num_samples_per_epoch", type=int, default=None)
     parser.add_argument("--lr_scheduler", type=str, default="reduce_lr_on_plateau")
-    parser.add_argument("--lr_scheduler_patience", type=int, default=50)
+    parser.add_argument("--lr_scheduler_patience", type=int, default=5)
     parser.add_argument("--use_ema", type=str, default="False")
     parser.add_argument("--gradient_accumulation_steps", type=int, default=1)
     parser.add_argument("--mixed_precision", type=str, default="no")
@@ -157,7 +157,7 @@ def train():
     
     text_sampler = TextSampler(8, 32, (4, 7), exponent=0.5)
     renderers = make_renderers('files/font_square/clean_fonts', calib_threshold=0.8, verbose=True, load_font_into_mem=args.load_font_into_mem, 
-                               num_threads=args.load_font_num_threads)
+                               num_threads=args.load_font_num_threads)[:100]
     train_dataset = OnlineFontSquare('files/font_square/clean_fonts', 'files/font_square/backgrounds',
                                      text_sampler=text_sampler, length=args.num_samples_per_epoch, load_font_into_mem=args.load_font_into_mem, 
                                      renderers=renderers)
@@ -173,7 +173,7 @@ def train():
     lr_scheduler = get_scheduler(
         args.lr_scheduler,
         optimizer=optimizer,
-        scheduler_specific_kwargs={"patience": args.lr_scheduler_patience}
+        scheduler_specific_kwargs={"patience": args.lr_scheduler_patience, 'mode': 'max'}
     )
 
     writer_id, optimizer, train_loader, eval_loader, lr_scheduler = accelerator.prepare(writer_id, optimizer, train_loader, eval_loader, lr_scheduler)
@@ -276,30 +276,30 @@ def train():
 
         train_state.epoch += 1
 
-        if epoch % args.eval_epochs == 0 and accelerator.is_main_process:
-            with torch.no_grad():
-                eval_accuracy = validation(eval_loader, writer_id, accelerator, weight_dtype, ce_loss, accuracy, 'eval')
-                eval_accuracy = broadcast(torch.tensor(eval_accuracy, device=accelerator.device), from_process=0)
+        if epoch % args.eval_epochs == 0:
+            if accelerator.is_main_process:
+                with torch.no_grad():
+                    eval_accuracy = validation(eval_loader, writer_id, accelerator, weight_dtype, ce_loss, accuracy, 'eval')
+                    eval_accuracy = broadcast(torch.tensor(eval_accuracy, device=accelerator.device), from_process=0)
 
-                if args.use_ema:
-                    ema_writer_id.store(writer_id.parameters())
-                    ema_writer_id.copy_to(writer_id.parameters())
-                    _ = validation(eval_loader, writer_id, accelerator, weight_dtype, ce_loss, accuracy, 'ema')
-                    ema_writer_id.restore(writer_id.parameters())
+                    if args.use_ema:
+                        ema_writer_id.store(writer_id.parameters())
+                        ema_writer_id.copy_to(writer_id.parameters())
+                        _ = validation(eval_loader, writer_id, accelerator, weight_dtype, ce_loss, accuracy, 'ema')
+                        ema_writer_id.restore(writer_id.parameters())
 
-                if eval_accuracy > train_state.best_eval:
-                    train_state.best_eval = eval_accuracy
-                    writer_id_to_save = accelerator.unwrap_model(writer_id)
-                    writer_id_to_save.save_pretrained(args.output_dir / f"model_{epoch:04d}")
-                    del writer_id_to_save
-                    logger.info(f"Epoch {epoch} - Best eval accuracy: {eval_accuracy}")
+                    if eval_accuracy > train_state.best_eval:
+                        train_state.best_eval = eval_accuracy
+                        writer_id_to_save = accelerator.unwrap_model(writer_id)
+                        writer_id_to_save.save_pretrained(args.output_dir / f"model_{epoch:04d}")
+                        del writer_id_to_save
+                        logger.info(f"Epoch {epoch} - Best eval accuracy: {eval_accuracy}")
                 
                 train_state.last_eval = eval_accuracy
+                accelerator.save_state()
 
-            accelerator.save_state()
-
-        accelerator.wait_for_everyone()
-        lr_scheduler.step(train_state.last_eval)
+            accelerator.wait_for_everyone()
+            lr_scheduler.step(train_state.last_eval)
 
     accelerator.wait_for_everyone()
     if accelerator.is_main_process:
