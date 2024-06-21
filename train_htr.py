@@ -94,7 +94,7 @@ def train():
 
     parser.add_argument("--num_samples_per_epoch", type=int, default=None)
     parser.add_argument("--lr_scheduler", type=str, default="reduce_lr_on_plateau")
-    parser.add_argument("--lr_scheduler_patience", type=int, default=10)
+    parser.add_argument("--lr_scheduler_patience", type=int, default=5)
     parser.add_argument("--use_ema", type=str, default="False")
     parser.add_argument("--gradient_accumulation_steps", type=int, default=1)
     parser.add_argument("--mixed_precision", type=str, default="no")
@@ -286,30 +286,31 @@ def train():
                     accelerator.log(logs)
 
         train_state.epoch += 1
-        if epoch % args.eval_epochs == 0 and accelerator.is_main_process:
-            with torch.no_grad():
-                eval_cer = validation(eval_loader, htr, accelerator, weight_dtype, smooth_ce_loss, cer, 'eval')
-                eval_cer = broadcast(torch.tensor(eval_cer, device=accelerator.device), from_process=0)
+        if epoch % args.eval_epochs == 0:
+            if accelerator.is_main_process:
+                with torch.no_grad():
+                    eval_cer = validation(eval_loader, htr, accelerator, weight_dtype, smooth_ce_loss, cer, 'eval')
+                    eval_cer = broadcast(torch.tensor(eval_cer, device=accelerator.device), from_process=0)
 
-                if args.use_ema:
-                    ema_htr.store(htr.parameters())
-                    ema_htr.copy_to(htr.parameters())
-                    _ = validation(eval_loader, htr, accelerator, weight_dtype, smooth_ce_loss, cer, 'ema')
-                    ema_htr.restore(htr.parameters())
+                    if args.use_ema:
+                        ema_htr.store(htr.parameters())
+                        ema_htr.copy_to(htr.parameters())
+                        _ = validation(eval_loader, htr, accelerator, weight_dtype, smooth_ce_loss, cer, 'ema')
+                        ema_htr.restore(htr.parameters())
 
-                if eval_cer < train_state.best_eval:
-                    train_state.best_eval = eval_cer
-                    htr_to_save = accelerator.unwrap_model(htr)
-                    htr_to_save.save_pretrained(args.output_dir / f"model_{epoch:04d}")
-                    del htr_to_save
-                    logger.info(f"Epoch {epoch} - Best eval CER: {eval_cer}")
+                    if eval_cer < train_state.best_eval:
+                        train_state.best_eval = eval_cer
+                        htr_to_save = accelerator.unwrap_model(htr)
+                        htr_to_save.save_pretrained(args.output_dir / f"model_{epoch:04d}")
+                        del htr_to_save
+                        logger.info(f"Epoch {epoch} - Best eval CER: {eval_cer}")
 
                 train_state.last_eval = eval_cer
+                accelerator.save_state()
             
-            accelerator.save_state()
-
-        accelerator.wait_for_everyone()
-        lr_scheduler.step(train_state.last_eval)
+            accelerator.wait_for_everyone()
+            lr_scheduler.step(train_state.last_eval)
+            
         gc.collect()
 
     accelerator.wait_for_everyone()
