@@ -157,7 +157,7 @@ def train():
     
     text_sampler = TextSampler(8, 32, (4, 7), exponent=0.5)
     renderers = make_renderers('files/font_square/clean_fonts', calib_threshold=0.8, verbose=True, load_font_into_mem=args.load_font_into_mem, 
-                               num_threads=args.load_font_num_threads)[:100]
+                               num_threads=args.load_font_num_threads)
     train_dataset = OnlineFontSquare('files/font_square/clean_fonts', 'files/font_square/backgrounds',
                                      text_sampler=text_sampler, length=args.num_samples_per_epoch, load_font_into_mem=args.load_font_into_mem, 
                                      renderers=renderers)
