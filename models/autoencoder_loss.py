@@ -1,8 +1,6 @@
 import torch
 import torch.nn as nn
 
-from models.htr import HTR
-from models.writer_id import WriterID
 from models.smooth_ce import SmoothCrossEntropyLoss
 from models.teacher_forcing import NoisyTeacherForcing
 import evaluate
@@ -17,13 +15,6 @@ class AutoencoderLoss(nn.Module):
                  writer_weight: float = 0.005,
                  noisy_teach_prob: float = 0.3,
                  alphabet: Alphabet = None,
-                 # htr: HTR = None,
-                 #writer_id: WriterID = None,
-                 # latent_htr_wid: bool = False):
-                 htr_path: str = None,
-                 htr_config: str = None,
-                 writer_id_path: str = None,
-                 writer_id_config: str = None,
                  latent_htr_wid: bool = False):
         super().__init__()
 
@@ -35,30 +26,8 @@ class AutoencoderLoss(nn.Module):
         self.htr_weight = htr_weight
         self.htr_criterion = SmoothCrossEntropyLoss(tgt_pad_idx=self.alphabet.pad)
         self.cer = evaluate.load('cer')
-        self.htr = None
 
         self.writer_weight = writer_weight
-        self.writer_id = None
-        
-        if self.latent_htr_wid:
-            if htr_config is not None: 
-                self.htr = HTR.from_config(htr_config)
-                self.htr.train()
-            if writer_id_config is not None:
-                self.writer_id = WriterID.from_config(writer_id_config)
-                self.writer_id.train()
-        else:
-            if htr_path is not None and htr_weight > 0:
-                self.htr = HTR.from_pretrained(htr_path)
-                self.htr.eval()
-                for param in self.htr.parameters():
-                    param.requires_grad = False
-            
-            if writer_id_path is not None and self.writer_weight > 0:
-                self.writer_id = WriterID.from_pretrained(writer_id_path)
-                self.writer_id.eval()
-                for param in self.writer_id.parameters():
-                    param.requires_grad = False
 
         self.writer_criterion = nn.CrossEntropyLoss()
         self.accuracy = evaluate.load('accuracy')
@@ -66,7 +35,7 @@ class AutoencoderLoss(nn.Module):
         self.log_var = nn.Parameter(torch.ones(size=()) * logvar_init)
 
     def forward(self, images, z, reconstructions, posteriors, writers, text_logits_s2s,
-                text_logits_s2s_length, split="train", tgt_key_padding_mask=None, source_mask=None):
+                text_logits_s2s_length, split="train", tgt_key_padding_mask=None, source_mask=None, htr=None, writer_id=None):
 
         rec_loss = torch.abs(images.contiguous() - reconstructions.contiguous())
         nll_loss = rec_loss
@@ -77,25 +46,25 @@ class AutoencoderLoss(nn.Module):
         predicted_characters_htr = []
         predicted_authors_writer_id = []
 
-        if self.htr is not None:
+        if htr is not None:
             text_logits_s2s_noisy = self.noisy_teacher(text_logits_s2s, text_logits_s2s_length)
             htr_input = reconstructions if not self.latent_htr_wid else z
-            output_htr = self.htr(htr_input, text_logits_s2s_noisy[:, :-1], source_mask, tgt_key_padding_mask[:, :-1])
-            htr_loss = self.htr_criterion(output_htr, text_logits_s2s[:, 1:])
+            output_htr = htr(htr_input, text_logits_s2s_noisy[:, :-1], source_mask, tgt_key_padding_mask[:, :-1])
+            htr_loss = self.htr_criterion(output_htr, text_logits_s2s[:, 1:]) * self.htr_weight
             predicted_logits = torch.argmax(output_htr, dim=2)
             predicted_characters = self.alphabet.decode(predicted_logits, [self.alphabet.eos])
             correct_characters = self.alphabet.decode(text_logits_s2s[:, 1:], [self.alphabet.eos])
             cer = self.cer.compute(predictions=predicted_characters, references=correct_characters)
-            nll_loss = nll_loss + self.htr_weight * htr_loss
+            nll_loss = nll_loss + htr_loss
             predicted_characters_htr.append(predicted_characters)
 
-        if self.writer_id is not None:
+        if writer_id is not None:
             writer_id_input = reconstructions if not self.latent_htr_wid else z
-            output_writer_id = self.writer_id(writer_id_input)
-            writer_loss = self.writer_criterion(output_writer_id, writers)
+            output_writer_id = writer_id(writer_id_input)
+            writer_loss = self.writer_criterion(output_writer_id, writers) * self.writer_weight
             predicted_authors = torch.argmax(output_writer_id, dim=1)
             acc = self.accuracy.compute(predictions=predicted_authors.int(), references=writers.int())['accuracy']
-            nll_loss = nll_loss + self.writer_weight * writer_loss
+            nll_loss = nll_loss + writer_loss
             predicted_authors_writer_id.append(list(predicted_authors))
 
         nll_loss = nll_loss / torch.exp(self.log_var) + self.log_var
@@ -120,4 +89,4 @@ class AutoencoderLoss(nn.Module):
             f'{split}/predicted_authors': predicted_authors_writer_id
         }
 
-        return loss, log, wandb_media_log
+        return {'loss': loss, 'htr_loss': htr_loss, 'writer_loss': writer_loss}, log, wandb_media_log

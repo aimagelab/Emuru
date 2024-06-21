@@ -112,31 +112,31 @@ def make_renderers(fonts, height=None, width=None, calib_text=None, calib_thresh
         return render
     
 
-    def render_fn_batched(fonts_path, load_font_into_mem):
-        renderers = []
-        for path in fonts_path:
-            renderers.append(render_fn(path, load_font_into_mem))
-        return renderers
+    # def render_fn_batched(fonts_path, load_font_into_mem):
+    #     renderers = []
+    #     for path in fonts_path:
+    #         renderers.append(render_fn(path, load_font_into_mem))
+    #     return renderers
     
 
-    def load_fonts_parallel(fonts_path, load_font_into_mem, num_threads, verbose=True):
-        renderers = []
-        font_batches = list(chunk_list(fonts_path, num_threads))
-        with ThreadPoolExecutor() as executor:
-            futures = [executor.submit(render_fn_batched, batch, load_font_into_mem) for batch in font_batches]
+    # def load_fonts_parallel(fonts_path, load_font_into_mem, num_threads, verbose=True):
+    #     renderers = []
+    #     font_batches = list(chunk_list(fonts_path, num_threads))
+    #     with ThreadPoolExecutor() as executor:
+    #         futures = [executor.submit(render_fn_batched, batch, load_font_into_mem) for batch in font_batches]
             
-            for future in tqdm(as_completed(futures), total=len(futures), desc='Loading fonts', disable=not verbose):
-                renderers.extend(future.result())
+    #         for future in tqdm(as_completed(futures), total=len(futures), desc='Loading fonts', disable=not verbose):
+    #             renderers.extend(future.result())
         
-        return renderers
+    #     return renderers
     
-    def chunk_list(lst, num_threads):
-        batch_size = math.ceil(len(lst) / num_threads)
-        for i in range(0, len(lst), batch_size):
-            yield lst[i:i + batch_size]
+    # def chunk_list(lst, num_threads):
+    #     batch_size = math.ceil(len(lst) / num_threads)
+    #     for i in range(0, len(lst), batch_size):
+    #         yield lst[i:i + batch_size]
 
-    renderers = load_fonts_parallel(fonts, load_font_into_mem, num_threads, verbose)
-    # renderers = [render_fn(path, load_font_into_mem) for path in tqdm(fonts, desc='Loading fonts', disable=not verbose)]  # no threads
+    # renderers = load_fonts_parallel(fonts, load_font_into_mem, num_threads, verbose)  # The rendered images are garbage, idk why
+    renderers = [render_fn(path, load_font_into_mem) for path in tqdm(fonts, desc='Loading fonts', disable=not verbose)]  # no threads
     
     return renderers
 
@@ -266,6 +266,7 @@ class TextSampler:
             self.words = words_unique
             # self.words_frequencies = torch.tensor(list(words_frequencies.values()), dtype=torch.float)
 
+        self.words = self.words[:10]
         unigram_long_text = ''.join(self.words)
         unigram_counts = Counter(unigram_long_text)
         self.unigram_counts = {k: len(unigram_long_text) / v ** self.exponent for k, v in unigram_counts.items()}
