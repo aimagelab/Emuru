@@ -6,6 +6,7 @@ import math
 from tqdm.auto import tqdm
 import uuid
 import json
+import gc
 
 import torch
 from torch.utils.data import DataLoader
@@ -35,12 +36,19 @@ logging.basicConfig(
 )
 logger = get_logger(__name__)
 
+torch.autograd.set_detect_anomaly(True)
 
 @torch.no_grad()
-def validation(eval_loader, vae, accelerator, loss_fn, weight_dtype, wandb_prefix="eval"):
+def validation(eval_loader, vae, accelerator, loss_fn, weight_dtype, htr, writer_id, wandb_prefix="eval"):
     vae_model = accelerator.unwrap_model(vae)
     vae_model.eval()
-    eval_loss = 0.
+    htr_model = accelerator.unwrap_model(htr)
+    htr_model.eval()
+    writer_id_model = accelerator.unwrap_model(writer_id)
+    writer_id_model.eval()
+    eval_loss_vae = 0.
+    eval_loss_htr = 0.
+    eval_loss_writer_id = 0.
     images_for_log = []
     images_for_log_w_htr_wid = []
 
@@ -63,9 +71,15 @@ def validation(eval_loader, vae, accelerator, loss_fn, weight_dtype, wandb_prefi
                                                       writers=writers, text_logits_s2s=text_logits_s2s,
                                                       text_logits_s2s_length=text_logits_s2s_unpadded_len,
                                                       tgt_key_padding_mask=tgt_key_padding_mask, source_mask=tgt_mask,
-                                                      split=wandb_prefix)
+                                                      split=wandb_prefix, htr=htr_model, writer_id=writer_id_model)
+            
+            loss_vae = loss['loss']
+            loss_htr = loss['htr_loss']
+            loss_writer_id = loss['writer_loss']
 
-            eval_loss += loss.item()
+            eval_loss_vae += loss_vae.item()
+            eval_loss_htr += loss_htr.item()
+            eval_loss_writer_id += loss_writer_id.item()
 
             if step == 0:
                 images_for_log.append(torch.cat([images.cpu(), pred.repeat(1, 3, 1, 1).cpu()], dim=-1)[:8])
@@ -83,7 +97,9 @@ def validation(eval_loader, vae, accelerator, loss_fn, weight_dtype, wandb_prefi
     grid_nrows = 2
     accelerator.log({
         **log_dict,
-        f"{wandb_prefix}/loss": eval_loss / len(eval_loader),
+        f"{wandb_prefix}/loss_vae": loss_vae / len(eval_loader),
+        f"{wandb_prefix}/loss_htr": loss_htr / len(eval_loader),
+        f"{wandb_prefix}/loss_writer_id": loss_writer_id / len(eval_loader),
         "Original (left), Reconstruction (right)":
             [wandb.Image(torchvision.utils.make_grid(image, nrow=grid_nrows, normalize=True, value_range=(-1, 1)))
              for _, image in enumerate(images_for_log)],
@@ -92,33 +108,33 @@ def validation(eval_loader, vae, accelerator, loss_fn, weight_dtype, wandb_prefi
 
     del vae_model
     torch.cuda.empty_cache()
-    return eval_loss / len(eval_loader)
+    return eval_loss_vae / len(eval_loader), eval_loss_htr / len(eval_loader), eval_loss_writer_id / len(eval_loader)
 
 
 def train():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output_dir", type=str, default='results_vae', help="output directory")
     parser.add_argument("--logging_dir", type=str, default='results_vae', help="logging directory")
-    parser.add_argument("--train_batch_size", type=int, default=32, help="train batch size")
+    parser.add_argument("--train_batch_size", type=int, default=4, help="train batch size")
     parser.add_argument("--eval_batch_size", type=int, default=32, help="eval batch size")
     parser.add_argument("--epochs", type=int, default=10000, help="number of epochs to train the model")
-    parser.add_argument("--eval_epochs", type=int, default=1, help="eval interval")
+    parser.add_argument("--eval_epochs", type=int, default=5, help="eval interval")
     parser.add_argument("--lr", type=float, default=1e-4, help="learning rate")
     parser.add_argument("--seed", type=int, default=24, help="random seed")
     parser.add_argument('--wandb_log_interval_steps', type=int, default=25, help="model save interval")
     parser.add_argument("--resume_id", type=str, default=None, help="resume from checkpoint")
     parser.add_argument("--vae_config", type=str, default='configs/vae/VAE_64x768.json', help='vae config path')
     parser.add_argument("--report_to", type=str, default="wandb")
-    parser.add_argument("--wandb_project_name", type=str, default="emuru_vae", help="wandb project name")
+    parser.add_argument("--wandb_project_name", type=str, default="emuru_vae_latent", help="wandb project name")
 
-    parser.add_argument("--htr_path", type=str, default='results/8da9/model_1000', help='htr checkpoint path')
-    parser.add_argument("--writer_id_path", type=str, default='results/b12a/model_4000', help='writerid config path')
+    parser.add_argument("--htr_config", type=str, default='configs/htr/HTR_64x768_latent.json', help='config path')
+    parser.add_argument("--writer_id_config", type=str, default='configs/writer_id/WriterID_64x768_latent.json', help='config path')
     
     parser.add_argument("--num_samples_per_epoch", type=int, default=None)
     parser.add_argument("--lr_scheduler", type=str, default="reduce_lr_on_plateau")
-    parser.add_argument("--lr_scheduler_patience", type=int, default=10)
+    parser.add_argument("--lr_scheduler_patience", type=int, default=5)
     parser.add_argument("--use_ema", type=str, default="False")
-    parser.add_argument("--gradient_accumulation_steps", type=int, default=1)
+    parser.add_argument("--gradient_accumulation_steps", type=int, default=8)
     parser.add_argument("--mixed_precision", type=str, default="no")
     parser.add_argument("--checkpoints_total_limit", type=int, default=5)
 
@@ -128,7 +144,6 @@ def train():
 
     args.use_ema = args.use_ema == "True"
     args.load_font_into_mem = args.load_font_into_mem == "True"
-    args.latent_htr_wid = args.latent_htr_wid == "True"
     args.adam_beta1 = 0.9
     args.adam_beta2 = 0.999
     args.adam_epsilon = 1e-8
@@ -174,7 +189,7 @@ def train():
         ema_vae = EMAModel(ema_vae.parameters(), model_cls=AutoencoderKL, model_config=vae.config)
         accelerator.register_for_checkpointing(ema_vae)
 
-    optimizer = torch.optim.AdamW(
+    optimizer_vae = torch.optim.AdamW(
         vae.parameters(),
         lr=args.lr,
         betas=(args.adam_beta1, args.adam_beta2),
@@ -195,28 +210,52 @@ def train():
     eval_loader = DataLoader(eval_dataset, batch_size=args.eval_batch_size, shuffle=False,
                              collate_fn=collate_fn, num_workers=4, persistent_workers=True)
 
-    lr_scheduler = get_scheduler(
+    lr_scheduler_vae = get_scheduler(
         args.lr_scheduler,
-        optimizer=optimizer,
+        optimizer=optimizer_vae,
         scheduler_specific_kwargs={"patience": args.lr_scheduler_patience}
     )
 
-    htr = HTR.from_pretrained(args.htr_path)
-    writer_id = WriterID.from_pretrained(args.writer_id_path)
-    htr.eval()
-    writer_id.eval()
-    for param in htr.parameters():
-        param.requires_grad = False
-    for param in writer_id.parameters():
-        param.requires_grad = False
+    htr = HTR.from_config(args.htr_config)
+    writer_id = WriterID.from_config(args.writer_id_config)
+    htr.train()
+    writer_id.train()
 
-    loss_fn = AutoencoderLoss(alphabet=train_dataset.alphabet, htr=htr, writer_id=writer_id)
-    args.htr_params = sum([p.numel() for p in loss_fn.htr.parameters()])
-    args.writer_id_params = sum([p.numel() for p in loss_fn.writer_id.parameters()])
+    optimizer_htr = torch.optim.AdamW(
+        htr.parameters(),
+        lr=args.lr,
+        betas=(args.adam_beta1, args.adam_beta2),
+        weight_decay=args.adam_weight_decay,
+        eps=args.adam_epsilon)
+    
+    optimizer_writer_id = torch.optim.AdamW(
+        writer_id.parameters(),
+        lr=args.lr,
+        betas=(args.adam_beta1, args.adam_beta2),
+        weight_decay=args.adam_weight_decay,
+        eps=args.adam_epsilon)
+    
+    lr_scheduler_htr = get_scheduler(
+        args.lr_scheduler,
+        optimizer=optimizer_htr,
+        scheduler_specific_kwargs={"patience": args.lr_scheduler_patience, 'mode': 'max'}
+    )
+
+    lr_scheduler_writer_id = get_scheduler(
+        args.lr_scheduler,
+        optimizer=optimizer_writer_id,
+        scheduler_specific_kwargs={"patience": args.lr_scheduler_patience}
+    )
+
+    loss_fn = AutoencoderLoss(alphabet=train_dataset.alphabet)
+    args.htr_params = sum([p.numel() for p in htr.parameters()])
+    args.writer_id_params = sum([p.numel() for p in writer_id.parameters()])
     args.total_params = args.vae_params + args.htr_params + args.writer_id_params
 
-    vae, optimizer, train_loader, eval_loader, lr_scheduler, loss_fn = accelerator.prepare(
-        vae, optimizer, train_loader, eval_loader, lr_scheduler, loss_fn)
+    vae, htr, writer_id, loss_fn = accelerator.prepare(vae, htr, writer_id, loss_fn)
+    optimizer_vae, optimizer_htr, optimizer_writer_id = accelerator.prepare(optimizer_vae, optimizer_htr, optimizer_writer_id)
+    lr_scheduler_vae, lr_scheduler_htr, lr_scheduler_writer_id = accelerator.prepare(lr_scheduler_vae, lr_scheduler_htr, lr_scheduler_writer_id)
+    train_loader, eval_loader = accelerator.prepare(train_loader, eval_loader)
 
     weight_dtype = torch.float32
     if accelerator.mixed_precision == "fp16":
@@ -241,7 +280,7 @@ def train():
     logger.info(f"  Instantaneous batch size per device = {args.train_batch_size}")
     logger.info(f"  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}")
     logger.info(f"  Gradient Accumulation steps = {args.gradient_accumulation_steps}")
-    logger.info(f"  Total trainable parameters count = {args.vae}. VAE: {args.vae_params}, HTR: {args.htr_params}, WriterID: {args.writer_id_params}")
+    logger.info(f"  Total parameters count = {args.total_params}. VAE: {args.vae_params}, HTR: {args.htr_params}, WriterID: {args.writer_id_params}")
 
     train_state = TrainState(global_step=0, epoch=0)
     accelerator.register_for_checkpointing(train_state)
@@ -257,7 +296,11 @@ def train():
 
     for epoch in range(train_state.epoch, args.epochs):
         vae.train()
-        train_loss = 0.
+        htr.train()
+        writer_id.train()
+        train_loss_vae = 0.
+        train_loss_htr = 0.
+        train_loss_writer_id = 0.
 
         for _, batch in enumerate(train_loader):
 
@@ -286,19 +329,34 @@ def train():
                                                 writers=writers, text_logits_s2s=text_logits_s2s,
                                                 text_logits_s2s_length=text_logits_s2s_unpadded_len,
                                                 tgt_key_padding_mask=tgt_key_padding_mask, source_mask=tgt_mask,
-                                                split="train")['loss']
+                                                split="train", htr=htr, writer_id=writer_id)
+                    
+                    loss_vae = loss['loss']
+                    loss_htr = loss['htr_loss']
+                    loss_writer_id = loss['writer_loss']
 
-                    if not torch.isfinite(loss):
+                    if not torch.isfinite(loss_vae) or not torch.isfinite(loss_htr) or not torch.isfinite(loss_writer_id):
                         logger.info("\nWARNING: non-finite loss")
-                        optimizer.zero_grad()
+                        optimizer_vae.zero_grad()
+                        optimizer_htr.zero_grad()
+                        optimizer_writer_id.zero_grad()
                         continue
 
-                    avg_loss = accelerator.gather(loss).mean()
-                    train_loss += avg_loss.item() / args.gradient_accumulation_steps
-                    accelerator.backward(loss)
+                    avg_loss_vae = accelerator.gather(loss_vae).mean()
+                    avg_loss_htr = accelerator.gather(loss_htr).mean()
+                    avg_loss_writer_id = accelerator.gather(loss_writer_id).mean()
+                    train_loss_vae += avg_loss_vae.item() / args.gradient_accumulation_steps
+                    train_loss_htr += avg_loss_htr.item() / args.gradient_accumulation_steps
+                    train_loss_writer_id += avg_loss_writer_id.item() / args.gradient_accumulation_steps
+                    
+                    optimizer_vae.zero_grad()
+                    optimizer_htr.zero_grad()
+                    optimizer_writer_id.zero_grad()
 
-                    optimizer.step()
-                    optimizer.zero_grad()
+                    accelerator.backward(loss_vae)  # This should work because the vae loss contains htr and wid
+                    optimizer_vae.step()
+                    optimizer_htr.step()
+                    optimizer_writer_id.step()
 
                 logs = {}
                 if accelerator.sync_gradients:
@@ -308,9 +366,13 @@ def train():
                         ema_vae.step(vae.parameters())
                     train_state.global_step += 1
                     logs["global_step"] = train_state.global_step
-                    train_loss = 0.0
+                    train_loss_vae = 0.0
+                    train_loss_htr = 0.0
+                    train_loss_writer_id = 0.0
 
-                logs["lr"] = optimizer.param_groups[0]['lr']
+                logs["lr_vae"] = optimizer_vae.param_groups[0]['lr']
+                logs["lr_htr"] = optimizer_htr.param_groups[0]['lr']
+                logs["lr_writer_id"] = optimizer_writer_id.param_groups[0]['lr']
                 logs['epoch'] = epoch
                 logs.update(log_dict)
 
@@ -319,35 +381,55 @@ def train():
                     accelerator.log(logs)
 
         train_state.epoch += 1
-        if epoch % args.eval_epochs == 0 and accelerator.is_main_process:
-            with torch.no_grad():
-                eval_loss = validation(eval_loader, vae, accelerator, loss_fn, weight_dtype, 'eval')
-                eval_loss = broadcast(torch.tensor(eval_loss, device=accelerator.device), from_process=0)
+        if epoch % args.eval_epochs == 0:
+            if accelerator.is_main_process:
+                with torch.no_grad():
+                    eval_loss_vae, eval_loss_htr, eval_loss_writer_id = validation(
+                        eval_loader, vae, accelerator, loss_fn, weight_dtype, htr, writer_id, 'eval')
+                    
+                    eval_loss_vae = broadcast(torch.tensor(eval_loss_vae, device=accelerator.device), from_process=0)
+                    eval_loss_htr = broadcast(torch.tensor(eval_loss_htr, device=accelerator.device), from_process=0)
+                    eval_loss_writer_id = broadcast(torch.tensor(eval_loss_writer_id, device=accelerator.device), from_process=0)
 
-                if args.use_ema:
-                    ema_vae.store(vae.parameters())
-                    ema_vae.copy_to(vae.parameters())
-                    _ = validation(eval_loader, vae, accelerator, loss_fn, weight_dtype, 'ema')
-                    ema_vae.restore(vae.parameters())
+                    if args.use_ema:
+                        ema_vae.store(vae.parameters())
+                        ema_vae.copy_to(vae.parameters())
+                        _ = validation(eval_loader, vae, accelerator, loss_fn, weight_dtype, 'ema')
+                        ema_vae.restore(vae.parameters())
 
-                if eval_loss < train_state.best_eval:
-                    train_state.best_eval = eval_loss.item()
-                    vae_model = accelerator.unwrap_model(vae)
-                    vae_model.save_pretrained(args.output_dir / f"model_{epoch:04d}")
-                    del vae_model
-                    logger.info(f"Epoch {epoch} - Best eval loss: {eval_loss}")
+                    if eval_loss_vae < train_state.best_eval:
+                        train_state.best_eval = eval_loss_vae.item()
+                        vae_model = accelerator.unwrap_model(vae)
+                        vae_model.save_pretrained(args.output_dir / f"model_{epoch:04d}")
+                        del vae_model
+                        htr_model = accelerator.unwrap_model(htr)
+                        htr_model.save_pretrained(args.output_dir / f"htr_{epoch:04d}")
+                        del htr_model
+                        writer_id_model = accelerator.unwrap_model(writer_id)
+                        writer_id_model.save_pretrained(args.output_dir / f"writer_id_{epoch:04d}")
+                        del writer_id_model
+                        logger.info(f"Epoch {epoch} - Best eval loss: {eval_loss_vae}")
 
-                train_state.last_eval = eval_loss.item()
+                train_state.last_eval = eval_loss_vae.item()
+                accelerator.save_state()
 
-            accelerator.save_state()
+            accelerator.wait_for_everyone()
+            lr_scheduler_vae.step(eval_loss_vae)
+            lr_scheduler_htr.step(eval_loss_htr)
+            lr_scheduler_writer_id.step(eval_loss_writer_id)
 
-        lr_scheduler.step(eval_loss)
-        accelerator.wait_for_everyone()
+        gc.collect()
 
     accelerator.wait_for_everyone()
     if accelerator.is_main_process:
         vae = accelerator.unwrap_model(vae)
         vae.save_pretrained(args.output_dir)
+
+        htr = accelerator.unwrap_model(htr)
+        htr.save_pretrained(args.output_dir)
+
+        writer_id = accelerator.unwrap_model(writer_id)
+        writer_id.save_pretrained(args.output_dir)
 
         if args.use_ema:
             ema_vae.copy_to(vae.parameters())
