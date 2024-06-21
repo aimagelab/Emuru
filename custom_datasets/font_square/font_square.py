@@ -266,7 +266,6 @@ class TextSampler:
             self.words = words_unique
             # self.words_frequencies = torch.tensor(list(words_frequencies.values()), dtype=torch.float)
 
-        self.words = self.words[:10]
         unigram_long_text = ''.join(self.words)
         unigram_counts = Counter(unigram_long_text)
         self.unigram_counts = {k: len(unigram_long_text) / v ** self.exponent for k, v in unigram_counts.items()}
