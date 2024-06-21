@@ -238,7 +238,7 @@ def train():
     lr_scheduler_htr = get_scheduler(
         args.lr_scheduler,
         optimizer=optimizer_htr,
-        scheduler_specific_kwargs={"patience": args.lr_scheduler_patience, 'mode': 'max'}
+        scheduler_specific_kwargs={"patience": args.lr_scheduler_patience}
     )
 
     lr_scheduler_writer_id = get_scheduler(
@@ -415,8 +415,8 @@ def train():
 
             accelerator.wait_for_everyone()
             lr_scheduler_vae.step(eval_loss_vae)
-            lr_scheduler_htr.step(eval_loss_htr)
-            lr_scheduler_writer_id.step(eval_loss_writer_id)
+            lr_scheduler_htr.step(eval_loss_vae)  # I want the schedulers to have the same lr values as vae
+            lr_scheduler_writer_id.step(eval_loss_vae)  # I want the schedulers to have the same lr values as vae
 
         gc.collect()
 
