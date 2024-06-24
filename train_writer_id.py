@@ -23,7 +23,6 @@ import evaluate
 from utils import TrainState
 from custom_datasets import OnlineFontSquare, TextSampler, collate_fn
 from custom_datasets.constants import END_OF_SEQUENCE
-from models.writer_id import WriterID
 from custom_datasets.font_square.font_square import make_renderers
 
 logging.basicConfig(
@@ -98,10 +97,13 @@ def train():
     parser.add_argument("--load_font_into_mem", type=str, default="True")
     parser.add_argument("--load_font_num_threads", type=int, default=8)
 
+    parser.add_argument("--use_old_writer_id", type=str, default="False")
+
     args = parser.parse_args()
 
     args.use_ema = args.use_ema == "True"
     args.load_font_into_mem = args.load_font_into_mem == "True"
+    args.use_old_writer_id = args.use_old_writer_id == "True"
     args.adam_beta1 = 0.9
     args.adam_beta2 = 0.999
     args.adam_epsilon = 1e-8
@@ -136,6 +138,13 @@ def train():
         args.output_dir.mkdir(parents=True, exist_ok=True)
         args.logging_dir = Path(args.logging_dir)
         args.logging_dir.mkdir(parents=True, exist_ok=True)
+
+    if args.use_old_writer_id:
+        logger.info("Using old writer id model implementation")
+        from models.writer_id_old import WriterID
+        args.writer_id_config = Path(args.writer_id_config).parent / f'{Path(args.writer_id_config).stem}_old.json'
+    else:
+        from models.writer_id import WriterID
 
     with open(args.writer_id_config, "r") as f:
         config_dict = json.load(f)
