@@ -4,7 +4,7 @@
 #SBATCH --partition=all_usr_prod
 #SBATCH -e /work/FoMo_AIISDH/scascianelli/2024_emuru/jobs/train_htr_%j.err
 #SBATCH -o /work/FoMo_AIISDH/scascianelli/2024_emuru/jobs/train_htr_%j.out
-#SBATCH --mem=70G
+#SBATCH --mem=80G
 #SBATCH --constraint="gpu_A40_48G|gpu_RTX6000_24G|gpu_RTXA5000_24G"
 #SBATCH --nodes=1
 #SBATCH --ntasks=1               
