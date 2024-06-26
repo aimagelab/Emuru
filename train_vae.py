@@ -18,7 +18,6 @@ from accelerate.utils import ProjectConfiguration, set_seed
 from accelerate.utils import broadcast
 
 from models.htr import HTR
-from models.writer_id import WriterID
 from models.autoencoder_kl import AutoencoderKL
 from transformers.optimization import get_scheduler
 from diffusers.training_utils import EMAModel
@@ -113,6 +112,7 @@ def train():
 
     parser.add_argument("--htr_path", type=str, default='results/8da9/model_1000', help='htr checkpoint path')
     parser.add_argument("--writer_id_path", type=str, default='results/b12a/model_4000', help='writerid config path')
+    parser.add_argument("--use_old_writer_id", type=str, default="False")
     
     parser.add_argument("--num_samples_per_epoch", type=int, default=None)
     parser.add_argument("--lr_scheduler", type=str, default="reduce_lr_on_plateau")
@@ -163,6 +163,14 @@ def train():
         args.output_dir.mkdir(parents=True, exist_ok=True)
         args.logging_dir = Path(args.logging_dir)
         args.logging_dir.mkdir(parents=True, exist_ok=True)
+
+    
+    if args.use_old_writer_id:
+        logger.info("Using old writer id model implementation")
+        from models.writer_id_old import WriterID
+        args.writer_id_config = Path(args.writer_id_config).parent / f'{Path(args.writer_id_config).stem}_old.json'
+    else:
+        from models.writer_id import WriterID
 
     vae = AutoencoderKL.from_config(args.vae_config)
     vae.train()
