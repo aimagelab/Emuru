@@ -4,7 +4,7 @@
 #SBATCH --partition=all_usr_prod
 #SBATCH -e /work/FoMo_AIISDH/scascianelli/2024_emuru/jobs/train_writer_id_%j.err
 #SBATCH -o /work/FoMo_AIISDH/scascianelli/2024_emuru/jobs/train_writer_id_%j.out
-#SBATCH --mem=70G
+#SBATCH --mem=80G
 #SBATCH --constraint="gpu_A40_48G|gpu_RTX6000_24G|gpu_RTXA5000_24G"
 #SBATCH --nodes=1
 #SBATCH --ntasks=1              
@@ -27,7 +27,7 @@ export SCRIPT_ARGS=" \
     --logging_dir /work/FoMo_AIISDH/scascianelli/2024_emuru/results_writer_id \
     --train_batch_size 256 \
     --use_old_writer_id True \
-    --resume_id wid0 \
+    --resume_id wdo0 \
     "
 
 if [[ $SLURM_ARRAY_TASK_ID  -eq 0 ]]; then
