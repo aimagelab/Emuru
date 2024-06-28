@@ -305,6 +305,8 @@ def train():
                         del htr_to_save
                         logger.info(f"Epoch {epoch} - Best eval CER: {eval_cer}")
 
+                    
+
                 train_state.last_eval = eval_cer
                 accelerator.save_state()
             
