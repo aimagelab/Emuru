@@ -128,7 +128,6 @@ def train():
 
     args.use_ema = args.use_ema == "True"
     args.load_font_into_mem = args.load_font_into_mem == "True"
-    args.latent_htr_wid = args.latent_htr_wid == "True"
     args.adam_beta1 = 0.9
     args.adam_beta2 = 0.999
     args.adam_epsilon = 1e-8
