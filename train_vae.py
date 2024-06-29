@@ -110,7 +110,7 @@ def train():
     parser.add_argument("--report_to", type=str, default="wandb")
     parser.add_argument("--wandb_project_name", type=str, default="emuru_vae", help="wandb project name")
 
-    parser.add_argument("--htr_path", type=str, default='results_writer_id/wd0/model_0075', help='htr checkpoint path')
+    parser.add_argument("--htr_path", type=str, default='results_writer_id/wd0/model_0125', help='htr checkpoint path')
     parser.add_argument("--writer_id_path", type=str, default='results_htr/htr0', help='writerid config path')
     parser.add_argument("--use_old_writer_id", type=str, default="False")
     
