@@ -247,7 +247,7 @@ def train():
     logger.info(f"  Instantaneous batch size per device = {args.train_batch_size}")
     logger.info(f"  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}")
     logger.info(f"  Gradient Accumulation steps = {args.gradient_accumulation_steps}")
-    logger.info(f"  Total trainable parameters count = {args.vae}. VAE: {args.vae_params}, HTR: {args.htr_params}, WriterID: {args.writer_id_params}")
+    logger.info(f"  Total trainable parameters count = {args.vae_params}. VAE: {args.vae_params}, HTR: {args.htr_params}, WriterID: {args.writer_id_params}")
 
     train_state = TrainState(global_step=0, epoch=0)
     accelerator.register_for_checkpointing(train_state)
