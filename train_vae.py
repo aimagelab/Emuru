@@ -216,7 +216,7 @@ def train():
     for param in writer_id.parameters():
         param.requires_grad = False
 
-    loss_fn = AutoencoderLoss(alphabet=train_dataset.alphabet, htr=htr, writer_id=writer_id)
+    loss_fn = AutoencoderLoss(alphabet=train_dataset.alphabet)
     args.htr_params = sum([p.numel() for p in loss_fn.htr.parameters()])
     args.writer_id_params = sum([p.numel() for p in loss_fn.writer_id.parameters()])
     args.total_params = args.vae_params + args.htr_params + args.writer_id_params
@@ -292,7 +292,7 @@ def train():
                                                 writers=writers, text_logits_s2s=text_logits_s2s,
                                                 text_logits_s2s_length=text_logits_s2s_unpadded_len,
                                                 tgt_key_padding_mask=tgt_key_padding_mask, source_mask=tgt_mask,
-                                                split="train")['loss']
+                                                split="train", htr=htr, writer_id=writer_id)['loss']
 
                     if not torch.isfinite(loss):
                         logger.info("\nWARNING: non-finite loss")
