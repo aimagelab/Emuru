@@ -292,7 +292,9 @@ def train():
                                                 writers=writers, text_logits_s2s=text_logits_s2s,
                                                 text_logits_s2s_length=text_logits_s2s_unpadded_len,
                                                 tgt_key_padding_mask=tgt_key_padding_mask, source_mask=tgt_mask,
-                                                split="train", htr=htr, writer_id=writer_id)['loss']
+                                                split="train", htr=htr, writer_id=writer_id)
+                    
+                    loss = loss['loss']
 
                     if not torch.isfinite(loss):
                         logger.info("\nWARNING: non-finite loss")
