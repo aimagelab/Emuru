@@ -217,8 +217,8 @@ def train():
         param.requires_grad = False
 
     loss_fn = AutoencoderLoss(alphabet=train_dataset.alphabet)
-    args.htr_params = sum([p.numel() for p in loss_fn.htr.parameters()])
-    args.writer_id_params = sum([p.numel() for p in loss_fn.writer_id.parameters()])
+    args.htr_params = sum([p.numel() for p in htr.parameters()])
+    args.writer_id_params = sum([p.numel() for p in writer_id.parameters()])
     args.total_params = args.vae_params + args.htr_params + args.writer_id_params
 
     vae, optimizer, train_loader, eval_loader, lr_scheduler, loss_fn = accelerator.prepare(
