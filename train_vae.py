@@ -221,8 +221,8 @@ def train():
     args.writer_id_params = sum([p.numel() for p in writer_id.parameters()])
     args.total_params = args.vae_params + args.htr_params + args.writer_id_params
 
-    vae, optimizer, train_loader, eval_loader, lr_scheduler, loss_fn = accelerator.prepare(
-        vae, optimizer, train_loader, eval_loader, lr_scheduler, loss_fn)
+    vae, htr, writer_id, optimizer, train_loader, eval_loader, lr_scheduler, loss_fn = accelerator.prepare(
+        vae, htr, writer_id, optimizer, train_loader, eval_loader, lr_scheduler, loss_fn)
 
     weight_dtype = torch.float32
     if accelerator.mixed_precision == "fp16":
