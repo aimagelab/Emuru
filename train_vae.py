@@ -64,7 +64,7 @@ def validation(eval_loader, vae, accelerator, loss_fn, weight_dtype, wandb_prefi
                                                       tgt_key_padding_mask=tgt_key_padding_mask, source_mask=tgt_mask,
                                                       split=wandb_prefix)
 
-            eval_loss += loss.item()
+            eval_loss += loss['loss'].item()
 
             if step == 0:
                 images_for_log.append(torch.cat([images.cpu(), pred.repeat(1, 3, 1, 1).cpu()], dim=-1)[:8])
