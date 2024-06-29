@@ -167,7 +167,6 @@ def train():
     if args.use_old_writer_id:
         logger.info("Using old writer id model implementation")
         from models.writer_id_old import WriterID
-        args.writer_id_config = Path(args.writer_id_config).parent / f'{Path(args.writer_id_config).stem}_old.json'
     else:
         from models.writer_id import WriterID
 
