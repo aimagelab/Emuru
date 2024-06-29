@@ -36,7 +36,7 @@ logger = get_logger(__name__)
 
 
 @torch.no_grad()
-def validation(eval_loader, vae, accelerator, loss_fn, weight_dtype, wandb_prefix="eval"):
+def validation(eval_loader, vae, accelerator, loss_fn, weight_dtype, htr, writer_id, wandb_prefix="eval"):
     vae_model = accelerator.unwrap_model(vae)
     vae_model.eval()
     eval_loss = 0.
@@ -62,7 +62,7 @@ def validation(eval_loader, vae, accelerator, loss_fn, weight_dtype, wandb_prefi
                                                       writers=writers, text_logits_s2s=text_logits_s2s,
                                                       text_logits_s2s_length=text_logits_s2s_unpadded_len,
                                                       tgt_key_padding_mask=tgt_key_padding_mask, source_mask=tgt_mask,
-                                                      split=wandb_prefix)
+                                                      split=wandb_prefix, htr=htr, writer_id=writer_id)
 
             eval_loss += loss['loss'].item()
 
@@ -329,13 +329,13 @@ def train():
         train_state.epoch += 1
         if epoch % args.eval_epochs == 0 and accelerator.is_main_process:
             with torch.no_grad():
-                eval_loss = validation(eval_loader, vae, accelerator, loss_fn, weight_dtype, 'eval')
+                eval_loss = validation(eval_loader, vae, accelerator, loss_fn, weight_dtype,  htr, writer_id, 'eval')
                 eval_loss = broadcast(torch.tensor(eval_loss, device=accelerator.device), from_process=0)
 
                 if args.use_ema:
                     ema_vae.store(vae.parameters())
                     ema_vae.copy_to(vae.parameters())
-                    _ = validation(eval_loader, vae, accelerator, loss_fn, weight_dtype, 'ema')
+                    _ = validation(eval_loader, vae, accelerator, loss_fn, weight_dtype,  htr, writer_id, 'ema')
                     ema_vae.restore(vae.parameters())
 
                 if eval_loss < train_state.best_eval:
