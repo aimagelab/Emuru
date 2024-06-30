@@ -1,9 +1,9 @@
 class TrainState:
-    def __init__(self, global_step, epoch):
+    def __init__(self, global_step, epoch, best_eval_init):
         self.global_step = global_step
         self.epoch = epoch
-        self.best_eval = 0.0
-        self.last_eval = 0.0
+        self.best_eval = best_eval_init
+        self.last_eval = best_eval_init
 
     def __eq__(self, other):
         if isinstance(other, TrainState):

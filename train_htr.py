@@ -207,12 +207,14 @@ def train():
     logger.info(f"  Gradient Accumulation steps = {args.gradient_accumulation_steps}")
     logger.info(f"  Total parameters count = {args.total_params}")
 
-    train_state = TrainState(global_step=0, epoch=0)
+    train_state = TrainState(global_step=0, epoch=0, best_eval_init=float('inf')
     accelerator.register_for_checkpointing(train_state)
     if args.resume_id:
         try:
             accelerator.load_state()
             accelerator.project_configuration.iteration = train_state.epoch
+            if train_state.best_eval == 0.0:
+                train_state.best_eval = float('inf')
         except FileNotFoundError as e:
             logger.info(f"Checkpoint not found: {e}. Creating a new run")
 

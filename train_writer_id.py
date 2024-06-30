@@ -213,7 +213,7 @@ def train():
     logger.info(f"  Gradient Accumulation steps = {args.gradient_accumulation_steps}")
     logger.info(f"  Total parameters count = {args.total_params}")
 
-    train_state = TrainState(global_step=0, epoch=0)
+    train_state = TrainState(global_step=0, epoch=0, best_eval_init=0.0)
     accelerator.register_for_checkpointing(train_state)
     if args.resume_id:
         try:
