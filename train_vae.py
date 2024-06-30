@@ -39,6 +39,10 @@ logger = get_logger(__name__)
 def validation(eval_loader, vae, accelerator, loss_fn, weight_dtype, htr, writer_id, wandb_prefix="eval"):
     vae_model = accelerator.unwrap_model(vae)
     vae_model.eval()
+    htr_model = accelerator.unwrap_model(htr)
+    htr_model.eval()
+    writer_id_model = accelerator.unwrap_model(writer_id)
+    writer_id_model.eval()
     eval_loss = 0.
     images_for_log = []
     images_for_log_w_htr_wid = []
@@ -62,7 +66,7 @@ def validation(eval_loader, vae, accelerator, loss_fn, weight_dtype, htr, writer
                                                       writers=writers, text_logits_s2s=text_logits_s2s,
                                                       text_logits_s2s_length=text_logits_s2s_unpadded_len,
                                                       tgt_key_padding_mask=tgt_key_padding_mask, source_mask=tgt_mask,
-                                                      split=wandb_prefix, htr=htr, writer_id=writer_id)
+                                                      split=wandb_prefix, htr=htr_model, writer_id=writer_id_model)
 
             eval_loss += loss['loss'].item()
 
