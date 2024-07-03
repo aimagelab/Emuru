@@ -182,3 +182,5 @@ results/
 results_wid/
 results_htr/
 results_vae/
+*.safetensors
+models/lightning_vae
