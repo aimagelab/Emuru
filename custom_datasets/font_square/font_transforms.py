@@ -33,19 +33,19 @@ class RenderImage(object):
     def __init__(self, fonts_path, renderers, pad=0):
         self.pad = pad
 
-        fonts_data_path = fonts_path[0].parent / 'fonts_sizes.json'
-        if fonts_data_path.exists():
-            with open(fonts_data_path, 'r') as f:
-                fonts_data = json.load(f)
-        else:
-            fonts_data = {}
+        # fonts_data_path = fonts_path[0].parent / 'fonts_sizes.json'
+        # if fonts_data_path.exists():
+        #     with open(fonts_data_path, 'r') as f:
+        #         fonts_data = json.load(f)
+        # else:
+        #     fonts_data = {}
 
         self.renderers = renderers
         self.fonts_to_ids = {path.name: i for i, path in enumerate(fonts_path)}
-        self.ids_to_fonts = {i: path.name for i, path in enumerate(fonts_path)}
+        self.ids_to_fonts = {i: path for i, path in enumerate(fonts_path)}
 
-        with open(fonts_data_path, 'w') as f:
-            json.dump(fonts_data, f)
+        # with open(fonts_data_path, 'w') as f:
+        #     json.dump(fonts_data, f)
 
     def __call__(self, sample):
         font_id = sample['font_id'] if 'font_id' in sample else random.randrange(len(self.renderers))
@@ -54,13 +54,22 @@ class RenderImage(object):
             np_img, sample['text'] = render_class.render(sample['text'], action='top_left', pad=self.pad)
         except OSError:
             try:
-                print(f'Error rendering "{sample["text"]}" with font {self.ids_to_fonts[font_id]}. Try to render only ascii letters.')
+                print(f'WARNING rendering "{sample["text"]}" with font {self.ids_to_fonts[font_id].name}. Try to render only ascii letters.')
                 sample['text'] = ''.join([c for c in sample['text'] if c in set(string.ascii_lowercase + ' ')])
+                sample['text'] = ' '.join(sample['text'].split())
                 np_img, sample['text'] = render_class.render(sample['text'], action='top_left', pad=self.pad)
             except OSError:
-                print(f'Error rendering "{sample["text"]}" with font {self.ids_to_fonts[font_id]}. Rendering with empty text.')
+                print(f'ERROR rendering "{sample["text"]}" with font {self.ids_to_fonts[font_id].name}. Rendering with empty text. Please consider removing this font.')
+                print(f'\t- Font path: {self.ids_to_fonts[font_id].absolute()}')
                 sample['text'] = ''
                 np_img = np.zeros((128, 64), dtype=np.uint8)
+        except Exception as e:
+            print(f'FATAL ERROR rendering "{sample["text"]}" with font {self.ids_to_fonts[font_id].name}.')
+            print(f'\t- Font path: {self.ids_to_fonts[font_id].absolute()}')
+            print(f'\t- Error: {e}')
+            sample['text'] = ''
+            np_img = np.zeros((128, 64), dtype=np.uint8)
+
 
         sample['img'] = torch.from_numpy(np_img).unsqueeze(0).float()
         return sample
@@ -133,6 +142,7 @@ class ImgResize:
         sample['img'] = F.resize(sample['img'], [self.height, out_w], antialias=True)
         sample['bw_img'] = F.resize(sample['bw_img'], [self.height, out_w], antialias=True)
         sample['bg_patch'] = F.resize(sample['bg_patch'], [self.height, out_w], antialias=True)
+        sample['font_mask'] = F.resize(sample['font_mask'], [self.height, out_w], antialias=True)
         return sample
 
 
@@ -164,10 +174,12 @@ class ToWidth:
             sample['img'] = F.pad(sample['img'], (0, 0, pad_w, 0), fill=1)
             sample['bw_img'] = F.pad(sample['bw_img'], (0, 0, pad_w, 0), fill=1)
             sample['bg_patch'] = F.pad(sample['bg_patch'], (0, 0, pad_w, 0), fill=1)
+            sample['font_mask'] = F.pad(sample['font_mask'], (0, 0, pad_w, 0), fill=1)
         else:
             sample['img'] = sample['img'][:, :, :self.width]
             sample['bw_img'] = sample['bw_img'][:, :, :self.width]
             sample['bg_patch'] = sample['bg_patch'][:, :, :self.width]
+            sample['font_mask'] = sample['font_mask'][:, :, :self.width]
 
         return sample
 
@@ -191,18 +203,23 @@ class RandomBackground(object):
     start_time = time.time()
 
     def __init__(self, backgrounds, white_p=0.5):
-        self.bgs = [F.to_tensor(Image.open(path).convert('RGB')) for path in backgrounds]
+        self.bgs_paths = backgrounds
+        self.bgs = [F.to_tensor(Image.open(path).convert('RGB')) for path in self.bgs_paths]
         self.white_p = white_p
 
     def get_available_idx(self, img_h, img_w):
-        return [bg for bg in self.bgs if bg.shape[1] >= img_h and bg.shape[2] >= img_w] + [
-            None]  # None is for white background
+        return [(idx, bg) for idx, bg in enumerate(self.bgs) if bg.shape[1] >= img_h and bg.shape[2] >= img_w]
 
     @staticmethod
     def random_patch(bg, img_h, img_w):
         _, bg_h, bg_w = bg.shape
         assert bg_h >= img_h and bg_w >= img_w, f'Background size {bg_h}x{bg_w} is too small for image size {img_h}x{img_w}'
-        resize_crop = T.RandomResizedCrop((img_h, img_w), antialias=True)
+        resize_crop = T.RandomResizedCrop(
+            (img_h, img_w),
+            scale=(1.0, 1.0),
+            ratio=(1.0, 1.0),
+            antialias=True
+            )
         i, j, h, w = resize_crop.get_params(bg, resize_crop.scale, resize_crop.ratio)
         return F.resized_crop(bg, i, j, h, w, resize_crop.size, resize_crop.interpolation, antialias=True), (i, j, h, w)
 
@@ -214,11 +231,12 @@ class RandomBackground(object):
             return sample
         
         available_bgs = self.get_available_idx(h, w)
-        bg = random.choice(available_bgs)
-        if bg is not None:
-            bg_patch, _ = self.random_patch(bg, h, w)
-        else:
-            bg_patch = torch.ones((3, h, w))
+        if len(available_bgs) == 0:
+            sample['bg_patch'] = torch.ones((3, h, w))
+            return sample
+        bg_idx, bg = random.choice(available_bgs)
+        sample['bg_path'] = self.bgs_paths[bg_idx]
+        bg_patch, _ = self.random_patch(bg, h, w)
         assert bg_patch.numel() > 0, f'Background patch is empty for image size {h}x{w}'
 
         if random.random() > 0.5:
@@ -257,8 +275,8 @@ class MergeWithBackground:
     def __call__(self, sample):
         bw_img, bg_patch = sample['img'], sample['bg_patch']
         alpha = random.uniform(self.min_alpha, self.max_alpha)
-        font_mask = 1 - ((1 - bw_img) * alpha)
-        img = font_mask * bg_patch
+        sample['font_mask'] = 1 - ((1 - bw_img) * alpha)
+        img = sample['font_mask'] * bg_patch
         sample['img'] = img
         sample['bw_img'] = bw_img
         return sample
@@ -342,7 +360,7 @@ class RandomInvert:
         self.p = p
 
     def __call__(self, sample):
-        if random.random() > self.p:
+        if random.random() < self.p:
             sample['img'] = 1 - sample['img']
         return sample
 

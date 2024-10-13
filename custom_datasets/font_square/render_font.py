@@ -78,13 +78,18 @@ class Render:
     def render(self, text, action='random', pad=0):
         if self.charset is not None:
             text = ''.join([c for c in text if c in self.charset])
+            text = ' '.join(text.split())
 
         bbox_width, bbox_height = self._text_wh(text)
         if self.height is None or self.width is None:
             h, w =  bbox_height + 2 * pad, bbox_width + 2 * pad
         else:
             h, w = self.height, self.width
-        img = np.ones((h, w), np.uint8)
+        
+        if h * w < 1e9:  # 1e9 = 1GB
+            img = np.ones((h, w), np.uint8)
+        else:
+            img = np.ones((64, 64), np.uint8)
 
         img_pil = Image.fromarray(img)
         draw = ImageDraw.Draw(img_pil)

@@ -184,3 +184,5 @@ results_htr/
 results_vae/
 *.safetensors
 models/lightning_vae
+HWD
+verified_charset.json

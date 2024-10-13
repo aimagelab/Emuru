@@ -103,9 +103,8 @@ def make_renderers(fonts, height=None, width=None, calib_text=None, calib_thresh
         fonts_charset = json.load(f)
 
     def render_fn(font_path, load_font_into_mem):
-        font_size = fonts_data[font_path.name] if font_path.name in fonts_data else 64
-        charset = fonts_charset[font_path.name]['charset'] if font_path.name in fonts_charset else []
-        charset = set(charset) if len(charset) > 0 else None
+        font_size = fonts_data.get(font_path.name, 64)
+        charset = set(fonts_charset.get(font_path.name, []))
         render = Render(font_path, height, width, font_size, charset, load_font_into_mem)
         if font_path.name not in fonts_data:
             render.calibrate(calib_text, calib_threshold, calib_h)
@@ -144,33 +143,33 @@ def make_renderers(fonts, height=None, width=None, calib_text=None, calib_thresh
 
 class OnlineFontSquare(Dataset):
     def __init__(self, fonts, backgrounds, text_sampler=None, transform=None, length=None, load_font_into_mem=False, renderers=None):
-        backgrounds = Path(backgrounds) if isinstance(backgrounds, str) else backgrounds
+        if backgrounds is None:
+            backgrounds = []
+        if isinstance(backgrounds, str):
+            backgrounds = Path(backgrounds)
         if isinstance(backgrounds, Path) and backgrounds.is_dir():
             backgrounds = [p for p in backgrounds.rglob('*') if p.suffix in ('.jpg', '.png', '.jpeg')]
-        elif isinstance(backgrounds, Path) and backgrounds.is_file():
-            backgrounds = [backgrounds]
-        elif isinstance(backgrounds, list):
-            backgrounds = backgrounds
-        else:
-            raise ValueError(f'Backgrounds must be a directory or a list of paths. Got {type(backgrounds)}')
+        assert isinstance(backgrounds, list), 'Backgrounds must be a directory or a list of paths'
         
         self.fonts = get_fonts(fonts)
         if renderers is None:
             renderers = make_renderers(fonts, calib_threshold=0.8, verbose=True, load_font_into_mem=load_font_into_mem)
+        renderers = sorted(renderers, key=lambda r: len(r.charset), reverse=True)
+        renderers = renderers[:100000]
 
         self.text_sampler = text_sampler
         self.transform = T.Compose([
             FT.RenderImage(self.fonts, pad=20, renderers=renderers),
             FT.RandomRotation(3, fill=1, p=0.5),
-            FT.RandomWarping(grid_shape=(5, 2), p=0.15),
+            FT.RandomWarping(grid_shape=(5, 2), p=1.0),
             FT.GaussianBlur(kernel_size=3, p=0.5),
-            FT.RandomBackground(backgrounds, white_p=0.5),
+            FT.RandomBackground(backgrounds, white_p=0.1),
             FT.TailorTensor(pad=3),
             FT.MergeWithBackground(),
             # FT.GrayscaleErosion(kernel_size=2, p=0.05),
             FT.GrayscaleDilation(kernel_size=2, p=0.1),
-            FT.ColorJitter(brightness=0.15, contrast=0.15, saturation=0.15, hue=0, p=0.5),
-            FT.RandomInvert(p=0.3),
+            FT.ColorJitter(brightness=0.05, contrast=0.05, saturation=0.05, hue=0, p=0.5),
+            FT.RandomInvert(p=0.2),
             FT.ImgResize(64),
             # FT.MaxWidth(768),
             FT.ToWidth(768),
@@ -178,7 +177,7 @@ class OnlineFontSquare(Dataset):
             FT.Normalize((0.5,), (0.5,))
         ]) if transform is None else transform
 
-        self.length = len(self.fonts) if length is None else length
+        self.length = len(renderers) if length is None else length
         self.alphabet = Alphabet(charset=FONT_SQUARE_CHARSET)
 
     def __len__(self):
@@ -293,6 +292,31 @@ class TextSampler:
             txt = txt + (' ' * (self.min_len - len(txt)))
         if self.max_len is not None and len(txt) > self.max_len:
             txt = txt[:self.max_len]
+        return txt
+
+
+class GibberishSampler:
+    def __init__(self, lenght, charset=None):
+        self.charset = [
+            ' ', '!', '"', '#', '$', '%', '&', "'", '(', ')', '*', '+', ',', '-', '.', '/', '0', '1', '2', 
+            '3', '4', '5', '6', '7', '8', '9', ':', ';', '<', '=', '>', '?', '@', 'A', 'B', 'C', 'D', 'E', 
+            'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 
+            'Y', 'Z', '[', '\\', ']', '^', '_', '`', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 
+            'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z', '{', '|', '}', '~', 
+            '\x80', '\x91', '\x92', '\x93', '\x94', '\x97', '\x99', '¡', '¢', '¦', '§', '¨', '®', '°', '´', 
+            'µ', 'º', '»', 'À', 'Á', 'Â', 'Ä', 'Å', 'É', 'Ó', 'Ö', 'Ü', 'ß', 'à', 'á', 'â', 'ã', 'ä', 'å', 
+            'ç', 'è', 'é', 'ê', 'ë', 'í', 'î', 'ï', 'ñ', 'ó', 'ô', 'õ', 'ö', 'ù', 'ú', 'û', 'ü', 'Ă', 'Ą', 
+            'č', 'ď', 'ĺ', 'Ł', 'ŕ', 'Ś', 'Ť', 'ť', 'ż', 'ƒ', '˘', '˝', '—', '“', '”', '╜'
+        ] if charset is None else charset
+        self.chars_weights = torch.ones(len(self.charset), dtype=torch.float)
+        self.chars_weights[0] = self.chars_weights.sum() * 0.16  # The sapce has the highest probability
+        self.length = lenght
+
+
+    def __call__(self):
+        char_indexes = torch.multinomial(self.chars_weights, self.length, replacement=True)
+        res = [self.charset[i] for i in char_indexes]
+        txt = ''.join(res)
         return txt
 
 
