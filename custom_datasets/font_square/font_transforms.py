@@ -133,16 +133,14 @@ class ImgResize:
         self.height = height
 
     def __call__(self, sample):
-        _, h, w = sample['img'].shape
+        _, h, w = sample['rgba_img'].shape
         if h == self.height:
             return sample
         out_w = int(self.height * w / h)
         # assert out_w > 0 and out_w < 10_000, f'Invalid width {out_w} for image size {h}x{w}. Font: {sample["font_id"]} Text: {sample["text"]}'
 
-        sample['img'] = F.resize(sample['img'], [self.height, out_w], antialias=True)
-        sample['bw_img'] = F.resize(sample['bw_img'], [self.height, out_w], antialias=True)
         sample['bg_patch'] = F.resize(sample['bg_patch'], [self.height, out_w], antialias=True)
-        sample['font_mask'] = F.resize(sample['font_mask'], [self.height, out_w], antialias=True)
+        sample['rgba_img'] = F.resize(sample['rgba_img'], [self.height, out_w], antialias=True)
         return sample
 
 
@@ -156,7 +154,7 @@ class MaxWidth:
             return sample
 
         sample['img'] = sample['img'][:, :, :self.width]
-        sample['bw_img'] = sample['bw_img'][:, :, :self.width]
+        sample['alpha'] = sample['alpha'][:, :, :self.width]
         sample['bg_patch'] = sample['bg_patch'][:, :, :self.width]
 
         return sample
@@ -166,20 +164,16 @@ class ToWidth:
         self.width = width
 
     def __call__(self, sample):
-        _, h, w = sample['img'].shape
+        _, h, w = sample['rgba_img'].shape
         if w == self.width:
             return sample
         elif w < self.width:
             pad_w = self.width - w
-            sample['img'] = F.pad(sample['img'], (0, 0, pad_w, 0), fill=1)
-            sample['bw_img'] = F.pad(sample['bw_img'], (0, 0, pad_w, 0), fill=1)
             sample['bg_patch'] = F.pad(sample['bg_patch'], (0, 0, pad_w, 0), fill=1)
-            sample['font_mask'] = F.pad(sample['font_mask'], (0, 0, pad_w, 0), fill=1)
+            sample['rgba_img'] = F.pad(sample['rgba_img'], (0, 0, pad_w, 0), fill=0)
         else:
-            sample['img'] = sample['img'][:, :, :self.width]
-            sample['bw_img'] = sample['bw_img'][:, :, :self.width]
             sample['bg_patch'] = sample['bg_patch'][:, :, :self.width]
-            sample['font_mask'] = sample['font_mask'][:, :, :self.width]
+            sample['rgba_img'] = sample['rgba_img'][:, :, :self.width]
 
         return sample
 
@@ -194,7 +188,7 @@ class PadDivisible:
             return sample
 
         sample['img'] = F.pad(sample['img'], (0, 0, pad_w, 0), fill=1)
-        sample['bw_img'] = F.pad(sample['bw_img'], (0, 0, pad_w, 0), fill=1)
+        sample['alpha'] = F.pad(sample['alpha'], (0, 0, pad_w, 0), fill=1)
         sample['bg_patch'] = F.pad(sample['bg_patch'], (0, 0, pad_w, 0), fill=1)
         return sample
 
@@ -267,25 +261,36 @@ class TailorTensor:
         return sample
 
 
-class MergeWithBackground:
+class SplitAlphaChannel:
     def __init__(self, min_alpha=0.5, max_alpha=1.0):
         self.min_alpha = min_alpha
         self.max_alpha = max_alpha
 
     def __call__(self, sample):
-        bw_img, bg_patch = sample['img'], sample['bg_patch']
-        alpha = random.uniform(self.min_alpha, self.max_alpha)
-        sample['font_mask'] = 1 - ((1 - bw_img) * alpha)
-        img = sample['font_mask'] * bg_patch
-        sample['img'] = img
-        sample['bw_img'] = bw_img
+        bw_img = sample['img']
+        alpha_ink = random.uniform(self.min_alpha, self.max_alpha)
+        alpha  = (1 - bw_img) * alpha_ink 
+        rgb_img = 1 - torch.cat([bw_img, bw_img, bw_img], dim=0)
+        color = torch.rand(3)
+        sample['rgba_img'] = torch.cat([rgb_img * color[:, None, None], alpha], dim=0)
+        
         return sample
+    
+
+class MergeWithBackground:
+    def __call__(self, sample):
+        rgb_img, alpha = sample['rgba_img'].split([3, 1])
+        img = rgb_img * alpha + sample['bg_patch'] * (1 - alpha)
+
+        sample['img'] = img
+        return sample
+
 
 
 class Normalize(T.Normalize):
     def forward(self, sample):
-        sample['img'] = super().forward(sample['img'])
-        sample['bw_img'] = super().forward(sample['bw_img'])
+        sample['bg_patch'] = super().forward(sample['bg_patch'])
+        sample['rgba_img'] = super().forward(sample['rgba_img'])
         return sample
 
 
@@ -307,8 +312,27 @@ class ColorJitter(T.ColorJitter):
 
     def forward(self, sample):
         if random.random() < self.p:
-            sample['img'] = super().forward(sample['img'])
+            params = self.get_params(self.brightness, self.contrast, self.saturation, self.hue)
+
+            sample['bg_patch'] = self.apply(sample['bg_patch'], *params)
+            sample['rgba_img'][:3] = self.apply(sample['rgba_img'][:3], *params)
+
         return sample
+    
+    
+    def apply(self, img, fn_idx, brightness_factor, contrast_factor, saturation_factor, hue_factor):
+
+        for fn_id in fn_idx:
+            if fn_id == 0 and brightness_factor is not None:
+                img = F.adjust_brightness(img, brightness_factor)
+            elif fn_id == 1 and contrast_factor is not None:
+                img = F.adjust_contrast(img, contrast_factor)
+            elif fn_id == 2 and saturation_factor is not None:
+                img = F.adjust_saturation(img, saturation_factor)
+            elif fn_id == 3 and hue_factor is not None:
+                img = F.adjust_hue(img, hue_factor)
+
+        return img
 
 
 class RandomGrayscale(T.RandomGrayscale):
@@ -331,7 +355,7 @@ class GrayscaleErosion:
     def __call__(self, sample):
         if random.random() > self.p:
             sample['img'] = self.erode(sample['img'])
-            sample['bw_img'] = self.erode(sample['bw_img'])
+            sample['alpha'] = self.erode(sample['alpha'])
             sample['bg_patch'] = self.erode(sample['bg_patch'])
         return sample
 
@@ -349,8 +373,7 @@ class GrayscaleDilation:
 
     def __call__(self, sample):
         if random.random() > self.p:
-            sample['img'] = self.dilate(sample['img'])
-            sample['bw_img'] = self.dilate(sample['bw_img'])
+            sample['rgba_img'] = self.dilate(sample['rgba_img'])
             sample['bg_patch'] = self.dilate(sample['bg_patch'])
         return sample
     
@@ -361,7 +384,7 @@ class RandomInvert:
 
     def __call__(self, sample):
         if random.random() < self.p:
-            sample['img'] = 1 - sample['img']
+            sample['bg_patch'] = 1 - sample['bg_patch']
         return sample
 
 

@@ -37,6 +37,11 @@ class AutoencoderLoss(nn.Module):
     def forward(self, images, z, reconstructions, posteriors, writers, text_logits_s2s,
                 text_logits_s2s_length, split="train", tgt_key_padding_mask=None, source_mask=None, htr=None, writer_id=None):
 
+        images = (images + 1) / 2
+        images_rgb, images_alpha = images.split([3, 1], dim=1)
+        reconstructions = (reconstructions + 1) / 2
+        reconstructions_rgb, reconstructions_alpha = reconstructions.split([3, 1], dim=1)
+
         rec_loss = torch.abs(images.contiguous() - reconstructions.contiguous())
         nll_loss = rec_loss
         htr_loss = torch.tensor(0.0, device=images.device)
@@ -46,9 +51,16 @@ class AutoencoderLoss(nn.Module):
         predicted_characters_htr = []
         predicted_authors_writer_id = []
 
+        images_grayscaled = images_rgb * images_alpha 
+        images_grayscaled = 0.2989 * images_grayscaled[:, 0] + 0.5870 * images_grayscaled[:, 1] + 0.1140 * images_grayscaled[:, 2]
+        images_grayscaled = 1 - images_grayscaled.unsqueeze(1)
+        reconstructions_grayscaled = reconstructions_rgb * reconstructions_alpha
+        reconstructions_grayscaled = 0.2989 * reconstructions_grayscaled[:, 0] + 0.5870 * reconstructions_grayscaled[:, 1] + 0.1140 * reconstructions_grayscaled[:, 2]
+        reconstructions_grayscaled = 1 - reconstructions_grayscaled.unsqueeze(1)
+
         if htr is not None:
             text_logits_s2s_noisy = self.noisy_teacher(text_logits_s2s, text_logits_s2s_length)
-            htr_input = reconstructions if not self.latent_htr_wid else z
+            htr_input = reconstructions_grayscaled if not self.latent_htr_wid else z
             output_htr = htr(htr_input, text_logits_s2s_noisy[:, :-1], source_mask, tgt_key_padding_mask[:, :-1])
             htr_loss = self.htr_criterion(output_htr, text_logits_s2s[:, 1:]) * self.htr_weight
             predicted_logits = torch.argmax(output_htr, dim=2)
@@ -59,7 +71,7 @@ class AutoencoderLoss(nn.Module):
             predicted_characters_htr.append(predicted_characters)
 
         if writer_id is not None:
-            writer_id_input = reconstructions if not self.latent_htr_wid else z
+            writer_id_input = reconstructions_grayscaled if not self.latent_htr_wid else z
             output_writer_id = writer_id(writer_id_input)
             writer_loss = self.writer_criterion(output_writer_id, writers) * self.writer_weight
             predicted_authors = torch.argmax(output_writer_id, dim=1)

@@ -50,7 +50,7 @@ def validation(eval_loader, vae, accelerator, loss_fn, weight_dtype, htr, writer
     for step, batch in enumerate(eval_loader):
         with accelerator.autocast():
             images = batch['images'].to(weight_dtype)
-            targets = batch['images_bw'].to(weight_dtype)
+            targets_rgba_texts = batch['rgba_texts'].to(weight_dtype)
             writers = batch['writers']
 
             text_logits_s2s = batch['text_logits_s2s']
@@ -62,7 +62,7 @@ def validation(eval_loader, vae, accelerator, loss_fn, weight_dtype, htr, writer
             z = posterior.sample()
             pred = vae_model.decode(z).sample
 
-            loss, log_dict, wandb_media_log = loss_fn(images=targets, z=z, reconstructions=pred, posteriors=posterior,
+            loss, log_dict, wandb_media_log = loss_fn(images=targets_rgba_texts, z=z, reconstructions=pred, posteriors=posterior,
                                                       writers=writers, text_logits_s2s=text_logits_s2s,
                                                       text_logits_s2s_length=text_logits_s2s_unpadded_len,
                                                       tgt_key_padding_mask=tgt_key_padding_mask, source_mask=tgt_mask,
@@ -71,15 +71,22 @@ def validation(eval_loader, vae, accelerator, loss_fn, weight_dtype, htr, writer
             eval_loss += loss['loss'].item()
 
             if step == 0:
-                images_for_log.append(torch.cat([images.cpu(), pred.repeat(1, 3, 1, 1).cpu()], dim=-1)[:8])
+                alpha_fake = torch.ones_like(images[:, :1])
+                rgba_images = torch.cat([images, alpha_fake], dim=1)
+                images_for_log.append(torch.cat([rgba_images.cpu(), pred.cpu()], dim=-1)[:8])
 
             if step < 2:
                 author_id = batch['writers'][0].item()
                 pred_author_id = wandb_media_log[f'{wandb_prefix}/predicted_authors'][0][0]
                 text = batch['texts'][0]
                 pred_text = wandb_media_log[f'{wandb_prefix}/predicted_characters'][0][0]
-                images_for_log_w_htr_wid.append(wandb.Image(
-                    torch.cat([images.cpu()[0], pred.repeat(1, 3, 1, 1).cpu()[0]], dim=-1),
+
+                alpha_fake = torch.ones_like(images[:, :1])
+                rgba_images = torch.cat([images, alpha_fake], dim=1)
+
+                images_for_log_w_htr_wid.append(
+                    wandb.Image(
+                    torch.cat([rgba_images.cpu()[0], pred.cpu()[0]], dim=-1),
                     caption=f'AID: {author_id}, Pred AID: {pred_author_id}, Text: {text}, Pred Text: {pred_text}')
                 )
 
@@ -276,7 +283,7 @@ def train():
             with accelerator.autocast():
                 with accelerator.accumulate(vae):
                     images = batch['images'].to(weight_dtype)
-                    targets = batch['images_bw'].to(weight_dtype)
+                    targets_rgba_texts = batch['rgba_texts'].to(weight_dtype)
                     writers = batch['writers']
 
                     text_logits_s2s = batch['text_logits_s2s']
@@ -294,7 +301,7 @@ def train():
                     else:
                         pred = vae.decode(z).sample
 
-                    loss, log_dict, _ = loss_fn(images=targets, z=z, reconstructions=pred, posteriors=posterior,
+                    loss, log_dict, _ = loss_fn(images=targets_rgba_texts, z=z, reconstructions=pred, posteriors=posterior,
                                                 writers=writers, text_logits_s2s=text_logits_s2s,
                                                 text_logits_s2s_length=text_logits_s2s_unpadded_len,
                                                 tgt_key_padding_mask=tgt_key_padding_mask, source_mask=tgt_mask,

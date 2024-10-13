@@ -36,7 +36,7 @@ def pad_images(images, padding_value=1):
 
 def collate_fn(batch):
     images = []
-    images_bw = []
+    rgba_texts = []
     texts = []
     names = []
     text_logits_ctc = []
@@ -45,8 +45,8 @@ def collate_fn(batch):
     writers = []
 
     for item in batch:
-        images.append(item['image'])
-        images_bw.append(item['image_bw'])
+        images.append(item['img'])
+        rgba_texts.append(item['rgba_text'])
         texts.append(item['text'])
         names.append(item["name"])
         text_logits_ctc.append(item['text_logits_ctc'])
@@ -55,7 +55,7 @@ def collate_fn(batch):
         writers.append(item['writer'])
 
     images = pad_images(images, padding_value=PAD)
-    images_bw = pad_images(images_bw, padding_value=PAD)
+    rgba_texts = pad_images(rgba_texts, padding_value=PAD)
     text_logits_ctc = pad_sequence(text_logits_ctc, padding_value=PAD, batch_first=True)
     text_logits_s2s = pad_sequence(text_logits_s2s, padding_value=PAD, batch_first=True)
     tgt_key_mask = subsequent_mask(text_logits_s2s.shape[-1] - 1)
@@ -63,7 +63,7 @@ def collate_fn(batch):
 
     return {
         'images': images,
-        'images_bw': images_bw,
+        'rgba_texts': rgba_texts,
         'texts': texts,
         'unpadded_texts_len': torch.LongTensor(texts_len),
         'writers': torch.LongTensor(writers),
@@ -165,7 +165,7 @@ class OnlineFontSquare(Dataset):
             FT.GaussianBlur(kernel_size=3, p=0.5),
             FT.RandomBackground(backgrounds, white_p=0.1),
             FT.TailorTensor(pad=3),
-            FT.MergeWithBackground(),
+            FT.SplitAlphaChannel(),
             # FT.GrayscaleErosion(kernel_size=2, p=0.05),
             FT.GrayscaleDilation(kernel_size=2, p=0.1),
             FT.ColorJitter(brightness=0.05, contrast=0.05, saturation=0.05, hue=0, p=0.5),
@@ -174,6 +174,7 @@ class OnlineFontSquare(Dataset):
             # FT.MaxWidth(768),
             FT.ToWidth(768),
             # FT.PadDivisible(8),
+            FT.MergeWithBackground(),
             FT.Normalize((0.5,), (0.5,))
         ]) if transform is None else transform
 
@@ -192,10 +193,11 @@ class OnlineFontSquare(Dataset):
         text_logits_ctc = self.alphabet.encode(text)
         text_logits_s2s = torch.cat([sos, text_logits_ctc, eos])
         unpadded_text_len = len(sample['text'])
+        
 
         return {
-            'image': sample['img'],
-            'image_bw': sample['bw_img'],
+            'rgba_text': sample['rgba_img'],
+            'img': sample['img'],
             'text': text,
             'writer': font_id,
             'text_logits_ctc': text_logits_ctc,
