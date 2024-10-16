@@ -214,7 +214,7 @@ class HFDataCollector:
     def __call__(self, batch):
         txts = [sample['text'] for sample in batch]
         res = self.tokenizer(txts, padding=True, return_tensors='pt', return_attention_mask=True, return_length=True)
-        res['img'] = pad_images([sample['image'] for sample in batch])
+        res['img'] = pad_images([sample['img'] for sample in batch])
         return res
 
 

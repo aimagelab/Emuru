@@ -13,7 +13,7 @@ args = parser.parse_args()
 
 device = torch.device('cuda')
 src_root = Path(args.src_root)
-dst_root = src_root.parent / f'{src_root.name}_vae'
+dst_root = src_root.parent / f'{src_root.name}_vae_rgba'
 model = Emuru()
 
 # checkpoint_dir = Path('files/checkpoints/Emuru_100k_FW')
@@ -38,4 +38,13 @@ for img_path in tqdm(images):
 
     dst_img = dst_root / img_path.relative_to(src_root)
     dst_img.parent.mkdir(parents=True, exist_ok=True)
+
+    rgb, alpha = vae_img.split((3, 1), dim=1)
+    alpha = (alpha + 1) / 2
+
+    # Create a white background (shape matches RGB, value 1 for white)
+    white_bg = torch.ones_like(rgb)
+
+    # Blend the RGB with the white background using the alpha channel
+    vae_img = rgb * alpha + white_bg * (1 - alpha)
     save_image(vae_img, dst_img)

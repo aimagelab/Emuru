@@ -14,7 +14,7 @@ from models.autoencoder_kl import AutoencoderKL
 class Emuru(torch.nn.Module):
     def __init__(self,
                  t5_checkpoint="google-t5/t5-small",
-                 vae_checkpoint='files/checkpoints/vae_0850',
+                 vae_checkpoint='files/checkpoints/vae_0061',
                  ocr_checkpoint='files/checkpoints/Origami_bw_img/origami.pth',
                  slices_per_query=1):
         super(Emuru, self).__init__()
@@ -185,8 +185,8 @@ class Emuru(torch.nn.Module):
             return test_img
         
         if pred is not None:
-            pred = repeat(torch.clamp(self.vae.decode(pred).sample, -1, 1), 'b 1 h w -> b 3 h w')
-        gt = repeat(torch.clamp(self.vae.decode(gt).sample, -1, 1), 'b 1 h w -> b 3 h w')
+            pred = torch.clamp(self.vae.decode(pred).sample, -1, 1)
+        gt = torch.clamp(self.vae.decode(gt).sample, -1, 1)
         return pred, gt, torch.cat([make_grid(gt[:16], nrow=1, normalize=True),
                             make_grid(_continue_gen(1), nrow=1, normalize=True),
                             make_grid(_continue_gen(4), nrow=1, normalize=True),
