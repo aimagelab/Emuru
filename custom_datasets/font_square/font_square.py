@@ -36,7 +36,7 @@ def pad_images(images, padding_value=1):
 
 def collate_fn(batch):
     images = []
-    rgba_texts = []
+    text_images = []
     texts = []
     names = []
     text_logits_ctc = []
@@ -46,7 +46,7 @@ def collate_fn(batch):
 
     for item in batch:
         images.append(item['img'])
-        rgba_texts.append(item['rgba_text'])
+        text_images.append(item['text_img'])
         texts.append(item['text'])
         names.append(item["name"])
         text_logits_ctc.append(item['text_logits_ctc'])
@@ -55,7 +55,7 @@ def collate_fn(batch):
         writers.append(item['writer'])
 
     images = pad_images(images, padding_value=PAD)
-    rgba_texts = pad_images(rgba_texts, padding_value=PAD)
+    text_images = pad_images(text_images, padding_value=PAD)
     text_logits_ctc = pad_sequence(text_logits_ctc, padding_value=PAD, batch_first=True)
     text_logits_s2s = pad_sequence(text_logits_s2s, padding_value=PAD, batch_first=True)
     tgt_key_mask = subsequent_mask(text_logits_s2s.shape[-1] - 1)
@@ -63,7 +63,7 @@ def collate_fn(batch):
 
     return {
         'images': images,
-        'rgba_texts': rgba_texts,
+        'text_images': text_images,
         'texts': texts,
         'unpadded_texts_len': torch.LongTensor(texts_len),
         'writers': torch.LongTensor(writers),
@@ -196,7 +196,7 @@ class OnlineFontSquare(Dataset):
         
 
         return {
-            'rgba_text': sample['rgba_img'],
+            'text_img': sample['text_img'],
             'img': sample['img'],
             'text': text,
             'writer': font_id,

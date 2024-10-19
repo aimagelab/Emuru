@@ -46,7 +46,7 @@ def validation(eval_loader, htr, accelerator, weight_dtype, loss_fn, cer_fn, wan
 
     for step, batch in enumerate(eval_loader):
         with accelerator.autocast():
-            images = batch['images_bw'].to(weight_dtype)
+            images = batch['text_images'].to(weight_dtype)
             text_logits_s2s = batch['text_logits_s2s']
             tgt_mask = batch['tgt_key_mask']
             tgt_key_padding_mask = batch['tgt_key_padding_mask']
@@ -236,7 +236,7 @@ def train():
 
             with accelerator.autocast():
                 with accelerator.accumulate(htr):
-                    images = batch['images_bw'].to(weight_dtype)
+                    images = batch['text_images'].to(weight_dtype)
                     text_logits_s2s = batch['text_logits_s2s']
                     text_logits_s2s_noisy = noisy_teacher(text_logits_s2s, batch['unpadded_texts_len'])
                     tgt_mask = batch['tgt_key_mask']

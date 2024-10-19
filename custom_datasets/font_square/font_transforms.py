@@ -133,14 +133,14 @@ class ImgResize:
         self.height = height
 
     def __call__(self, sample):
-        _, h, w = sample['rgba_img'].shape
+        _, h, w = sample['text_img'].shape
         if h == self.height:
             return sample
         out_w = int(self.height * w / h)
         # assert out_w > 0 and out_w < 10_000, f'Invalid width {out_w} for image size {h}x{w}. Font: {sample["font_id"]} Text: {sample["text"]}'
 
         sample['bg_patch'] = F.resize(sample['bg_patch'], [self.height, out_w], antialias=True)
-        sample['rgba_img'] = F.resize(sample['rgba_img'], [self.height, out_w], antialias=True)
+        sample['text_img'] = F.resize(sample['text_img'], [self.height, out_w], antialias=True)
         return sample
 
 
@@ -164,16 +164,16 @@ class ToWidth:
         self.width = width
 
     def __call__(self, sample):
-        _, h, w = sample['rgba_img'].shape
+        _, h, w = sample['text_img'].shape
         if w == self.width:
             return sample
         elif w < self.width:
             pad_w = self.width - w
             sample['bg_patch'] = F.pad(sample['bg_patch'], (0, 0, pad_w, 0), fill=1)
-            sample['rgba_img'] = F.pad(sample['rgba_img'], (0, 0, pad_w, 0), fill=0)
+            sample['text_img'] = F.pad(sample['text_img'], (0, 0, pad_w, 0), fill=0)
         else:
             sample['bg_patch'] = sample['bg_patch'][:, :, :self.width]
-            sample['rgba_img'] = sample['rgba_img'][:, :, :self.width]
+            sample['text_img'] = sample['text_img'][:, :, :self.width]
 
         return sample
 
@@ -262,27 +262,30 @@ class TailorTensor:
 
 
 class SplitAlphaChannel:
-    def __init__(self, min_alpha=0.5, max_alpha=1.0):
+    def __init__(self, min_alpha=0.3, max_alpha=1.0):
         self.min_alpha = min_alpha
         self.max_alpha = max_alpha
 
     def __call__(self, sample):
         bw_img = sample['img']
         alpha_ink = random.uniform(self.min_alpha, self.max_alpha)
-        alpha  = (1 - bw_img) * alpha_ink 
-        rgb_img = 1 - torch.cat([bw_img, bw_img, bw_img], dim=0)
-        color = torch.rand(3)
-        sample['rgba_img'] = torch.cat([rgb_img * color[:, None, None], alpha], dim=0)
+        sample['alpha_ink'] = alpha_ink
+        sample['text_img'] = 1 - bw_img
+
+        # alpha  = (1 - bw_img) * alpha_ink 
+        # rgb_img = 1 - torch.cat([bw_img, bw_img, bw_img], dim=0)
+        #  sample['greyscale_img'] = 1 - bw_img
+        # color = torch.rand(3)
+        # sample['rgba_img'] = torch.cat([rgb_img * color[:, None, None], alpha], dim=0)
         
         return sample
     
 
 class MergeWithBackground:
     def __call__(self, sample):
-        rgb_img, alpha = sample['rgba_img'].split([3, 1])
-        img = rgb_img * alpha + sample['bg_patch'] * (1 - alpha)
-
-        sample['img'] = img
+        # img = sample['text_img'] * sample['alpha_ink'] + sample['bg_patch'] * (1 - sample['alpha_ink'])
+        sample['text_img'] = 1 - (sample['text_img'] * sample['alpha_ink'])
+        sample['img']  = sample['text_img'] * sample['bg_patch']
         return sample
 
 
@@ -290,7 +293,8 @@ class MergeWithBackground:
 class Normalize(T.Normalize):
     def forward(self, sample):
         sample['bg_patch'] = super().forward(sample['bg_patch'])
-        sample['rgba_img'] = super().forward(sample['rgba_img'])
+        sample['img'] = super().forward(sample['img'])
+        sample['text_img'] = super().forward(sample['text_img'])
         return sample
 
 
@@ -315,7 +319,7 @@ class ColorJitter(T.ColorJitter):
             params = self.get_params(self.brightness, self.contrast, self.saturation, self.hue)
 
             sample['bg_patch'] = self.apply(sample['bg_patch'], *params)
-            sample['rgba_img'][:3] = self.apply(sample['rgba_img'][:3], *params)
+            sample['text_img'] = self.apply(sample['text_img'], *params)
 
         return sample
     
@@ -373,7 +377,7 @@ class GrayscaleDilation:
 
     def __call__(self, sample):
         if random.random() > self.p:
-            sample['rgba_img'] = self.dilate(sample['rgba_img'])
+            sample['text_img'] = self.dilate(sample['text_img'])
             sample['bg_patch'] = self.dilate(sample['bg_patch'])
         return sample
     

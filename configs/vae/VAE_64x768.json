@@ -16,7 +16,7 @@
   "latent_channels": 1,
   "layers_per_block": 2,
   "norm_num_groups": 32,
-  "out_channels": 4,
+  "out_channels": 1,
   "up_block_types": [
     "UpDecoderBlock2D",
     "UpDecoderBlock2D",
