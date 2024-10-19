@@ -90,7 +90,9 @@ def train(args):
             wandb_data['train/alpha'] = model.alpha
 
             pred, gt, synth_gen_test = model.continue_gen_test(gt, batch, pred)
-            synth_img = torch.cat([batch['img'], gt, pred], dim=-1)[:16]
+            alpha = torch.ones_like(batch['img'][:, :1])
+            img_rgba = torch.cat([batch['img'], alpha], dim=1)
+            synth_img = torch.cat([img_rgba, gt, pred], dim=-1)[:16]
             wandb_data['synth_img'] = wandb.Image(make_grid(synth_img, nrow=1, normalize=True))
             wandb_data['synth_gen_test'] = wandb.Image(synth_gen_test)
             
@@ -106,7 +108,9 @@ def train(args):
             batch['input_ids'] = model.tokenizer(batch['style_text'], return_tensors='pt', padding=True).input_ids.to(args.device)
             batch['img'] = batch['style_img']
             pred, gt, real_gen_test = model.continue_gen_test(gt, batch, pred)
-            real_img = torch.cat([batch['img'], gt, pred], dim=-1)[:16]
+            alpha = torch.ones_like(batch['img'][:, :1])
+            img_rgba = torch.cat([batch['img'], alpha], dim=1)
+            real_img = torch.cat([img_rgba, gt, pred], dim=-1)[:16]
             wandb_data['real_img'] = wandb.Image(make_grid(real_img, nrow=1, normalize=True))
             wandb_data['real_gen_test'] = wandb.Image(real_gen_test)
 
@@ -133,7 +137,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Train a T5 model with a VAE')
     parser.add_argument('--device', type=str, default='cuda', help='Device')
     parser.add_argument('--t5_checkpoint', type=str, default='google-t5/t5-small', help='T5 checkpoint')
-    parser.add_argument('--vae_checkpoint', type=str, default='results_vae/abf3/model_0066', help='VAE checkpoint')
+    parser.add_argument('--vae_checkpoint', type=str, default='files/checkpoints/vae_0061', help='VAE checkpoint')
     parser.add_argument('--ocr_checkpoint', type=str, default='files/checkpoints/Origami_bw_img/origami.pth', help='OCR checkpoint')
     parser.add_argument('--resume_dir', type=str, default=None, help='Resume directory')
     parser.add_argument('--output_dir', type=str, default='files/checkpoints/Emuru_100k', help='Output directory')
