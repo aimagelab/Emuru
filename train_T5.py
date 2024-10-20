@@ -8,6 +8,7 @@ from tqdm import tqdm
 from utils import MetricCollector
 from torchvision.utils import make_grid, save_image
 from emuru import Emuru
+import pickle
 
 def train(args):
     if args.device == 'cpu':
@@ -31,7 +32,13 @@ def train(args):
 
     sampler = TextSampler(8, 32, (4, 7))
     # sampler = GibberishSampler(32)
-    dataset = OnlineFontSquare('files/font_square/clean_fonts', 'files/font_square/backgrounds', sampler)
+    if args.renderers:
+        with open(args.renderers, 'rb') as f:
+            renderers = pickle.load(f)
+    else:
+        renderers = None
+
+    dataset = OnlineFontSquare(args.fonts, args.backgrounds, sampler, renderers=renderers)
     dataset[0]
     dataset.length *= args.db_multiplier
     loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, collate_fn=model.data_collator,
@@ -141,6 +148,9 @@ if __name__ == '__main__':
     parser.add_argument('--ocr_checkpoint', type=str, default='files/checkpoints/Origami_bw_img/origami.pth', help='OCR checkpoint')
     parser.add_argument('--resume_dir', type=str, default=None, help='Resume directory')
     parser.add_argument('--output_dir', type=str, default='files/checkpoints/Emuru_100k', help='Output directory')
+    parser.add_argument('--fonts', type=str, default='files/font_square/clean_fonts', help='Fonts path')
+    parser.add_argument('--backgrounds', type=str, default='files/font_square/backgrounds', help='Backgrounds path')
+    parser.add_argument('--renderers', type=str, help='Renderers path')
     parser.add_argument('--checkpoint_tag', type=str, default='', help='Checkpoint tag')
     parser.add_argument('--db_multiplier', type=int, default=1, help='Dataset multiplier')
     parser.add_argument('--learning_rate', type=float, default=0.0001, help='Learning rate')
