@@ -103,12 +103,16 @@ def make_renderers(fonts, height=None, width=None, calib_text=None, calib_thresh
         fonts_charset = json.load(f)
 
     def render_fn(font_path, load_font_into_mem):
-        font_size = fonts_data.get(font_path.name, 64)
-        charset = set(fonts_charset.get(font_path.name, []))
-        render = Render(font_path, height, width, font_size, charset, load_font_into_mem)
-        if font_path.name not in fonts_data:
-            render.calibrate(calib_text, calib_threshold, calib_h)
-        return render
+        try:
+            font_size = fonts_data.get(font_path.name, 64)
+            charset = set(fonts_charset.get(font_path.name, []))
+            render = Render(font_path, height, width, font_size, charset, load_font_into_mem)
+            if font_path.name not in fonts_data:
+                render.calibrate(calib_text, calib_threshold, calib_h)
+            return render
+        except Exception as e:
+            print(f'Error while loading the font {font_path} raised the exception {e}')
+            return None
     
 
     # def render_fn_batched(fonts_path, load_font_into_mem):
@@ -136,7 +140,7 @@ def make_renderers(fonts, height=None, width=None, calib_text=None, calib_thresh
 
     # renderers = load_fonts_parallel(fonts, load_font_into_mem, num_threads, verbose)  # The rendered images are garbage, idk why
     renderers = [render_fn(path, load_font_into_mem) for path in tqdm(fonts, desc='Loading fonts', disable=not verbose)]  # no threads
-    
+    renderers = [r for r in renderers if r is not None]
     return renderers
 
 

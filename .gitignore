@@ -186,3 +186,4 @@ results_vae/
 models/lightning_vae
 HWD
 verified_charset.json
+results_writer_id/*
