@@ -66,6 +66,7 @@ def validation(eval_loader, writer_id, accelerator, weight_dtype, loss_fn, accur
     })
 
     del writer_id_model
+    del images_for_log
     torch.cuda.empty_cache()
     return accuracy_value
 
@@ -80,7 +81,7 @@ def train():
     parser.add_argument("--lr", type=float, default=1e-4, help="learning rate")
     parser.add_argument("--seed", type=int, default=24, help="random seed")
     parser.add_argument('--wandb_log_interval_steps', type=int, default=25, help="model save interval")
-    parser.add_argument("--eval_epochs", type=int, default=25, help="eval interval")
+    parser.add_argument("--eval_epochs", type=int, default=5, help="eval interval")
     parser.add_argument("--resume_id", type=str, default=None, help="resume from checkpoint")
     parser.add_argument("--run_id", type=str, default=uuid.uuid4().hex[:4], help="uuid of the run")
     parser.add_argument("--writer_id_config", type=str, default='configs/writer_id/WriterID_64x768.json', help='config path')
@@ -166,9 +167,9 @@ def train():
                                     renderers=renderers)
 
     train_loader = DataLoader(train_dataset, batch_size=args.train_batch_size, shuffle=True,
-                              collate_fn=collate_fn, num_workers=4, persistent_workers=True)
+                              collate_fn=collate_fn, num_workers=4, persistent_workers=False)
     eval_loader = DataLoader(eval_dataset, batch_size=args.eval_batch_size, shuffle=False,
-                             collate_fn=collate_fn, num_workers=4, persistent_workers=True)
+                             collate_fn=collate_fn, num_workers=4, persistent_workers=False)
 
     lr_scheduler = get_scheduler(
         args.lr_scheduler,
@@ -188,7 +189,7 @@ def train():
         wandb_args = {"wandb": {"entity": "fomo_aiisdh", "name": args.run_name}}
         tracker_config = dict(vars(args))
         accelerator.init_trackers(args.wandb_project_name, tracker_config, wandb_args)
-        wandb.watch(writer_id, log="all", log_freq=1)
+        wandb.watch(writer_id, log="all", log_freq=1000)
 
     num_steps_per_epoch = math.ceil(len(train_loader) / args.gradient_accumulation_steps)
     args.max_train_steps = args.epochs * num_steps_per_epoch

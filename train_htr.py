@@ -169,9 +169,9 @@ def train():
                                     renderers=renderers)
 
     train_loader = DataLoader(train_dataset, batch_size=args.train_batch_size, shuffle=True,
-                              collate_fn=collate_fn, num_workers=4, persistent_workers=True)
+                              collate_fn=collate_fn, num_workers=4, persistent_workers=False)
     eval_loader = DataLoader(eval_dataset, batch_size=args.eval_batch_size, shuffle=False,
-                             collate_fn=collate_fn, num_workers=4, persistent_workers=True)
+                             collate_fn=collate_fn, num_workers=4, persistent_workers=False)
 
     lr_scheduler = get_scheduler(
         args.lr_scheduler,
@@ -191,7 +191,7 @@ def train():
         wandb_args = {"wandb": {"entity": "fomo_aiisdh", "name": args.run_name}}
         tracker_config = dict(vars(args))
         accelerator.init_trackers(args.wandb_project_name, tracker_config, wandb_args)
-        wandb.watch(htr, log="all", log_freq=1)
+        wandb.watch(htr, log="all", log_freq=1000)
 
     num_steps_per_epoch = math.ceil(len(train_loader) / args.gradient_accumulation_steps)
     args.max_train_steps = args.epochs * num_steps_per_epoch

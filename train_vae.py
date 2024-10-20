@@ -95,6 +95,7 @@ def validation(eval_loader, vae, accelerator, loss_fn, weight_dtype, htr, writer
     })
 
     del vae_model
+    del images_for_log, images_for_log_w_htr_wid
     torch.cuda.empty_cache()
     return eval_loss / len(eval_loader)
 
@@ -115,7 +116,7 @@ def train():
     parser.add_argument("--report_to", type=str, default="wandb")
     parser.add_argument("--wandb_project_name", type=str, default="emuru_vae", help="wandb project name")
 
-    parser.add_argument("--htr_path", type=str, default='results_htr/htr0', help='htr checkpoint path')
+    parser.add_argument("--htr_path", type=str, default='results_htr/f6a6', help='htr checkpoint path')
     parser.add_argument("--writer_id_path", type=str, default='results_writer_id/wd0/model_0125', help='writerid config path')
     
     parser.add_argument("--num_samples_per_epoch", type=int, default=None)
@@ -194,9 +195,9 @@ def train():
                                     renderers=renderers)
 
     train_loader = DataLoader(train_dataset, batch_size=args.train_batch_size, shuffle=True,
-                              collate_fn=collate_fn, num_workers=4, persistent_workers=True)
+                              collate_fn=collate_fn, num_workers=4, persistent_workers=False)
     eval_loader = DataLoader(eval_dataset, batch_size=args.eval_batch_size, shuffle=False,
-                             collate_fn=collate_fn, num_workers=4, persistent_workers=True)
+                             collate_fn=collate_fn, num_workers=4, persistent_workers=False)
 
     lr_scheduler = get_scheduler(
         args.lr_scheduler,
@@ -231,7 +232,7 @@ def train():
         wandb_args = {"wandb": {"entity": "fomo_aiisdh", "name": args.run_name}}
         tracker_config = dict(vars(args))
         accelerator.init_trackers(args.wandb_project_name, tracker_config, wandb_args)
-        wandb.watch(vae, log="all", log_freq=1)
+        wandb.watch(vae, log="all", log_freq=1000)
 
     num_steps_per_epoch = math.ceil(len(train_loader) / args.gradient_accumulation_steps)
     args.max_train_steps = args.epochs * num_steps_per_epoch
