@@ -36,12 +36,7 @@ class Render:
             try:
                 self.font = ImageFont.truetype(self.font_path, self.font_size)
             except OSError:
-                print(f'Error: {self.font_path}. Sleeping for 10 seconds...')
-                time.sleep(10)
-                try:
-                    self.font = ImageFont.truetype(self.font_path, self.font_size)
-                except OSError:
-                    raise OSError(f'Error: {self.font_path}')
+                raise OSError(f'Error: {self.font_path}')
         
         self.charset = charset
     
