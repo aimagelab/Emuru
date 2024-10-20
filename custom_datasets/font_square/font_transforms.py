@@ -207,7 +207,7 @@ class RandomBackground(object):
     @staticmethod
     def random_patch(bg, img_h, img_w):
         _, bg_h, bg_w = bg.shape
-        assert bg_h >= img_h and bg_w >= img_w, f'Background size {bg_h}x{bg_w} is too small for image size {img_h}x{img_w}'
+        # assert bg_h >= img_h and bg_w >= img_w, f'Background size {bg_h}x{bg_w} is too small for image size {img_h}x{img_w}'
         resize_crop = T.RandomResizedCrop(
             (img_h, img_w),
             scale=(1.0, 1.0),
@@ -219,16 +219,20 @@ class RandomBackground(object):
 
     def __call__(self, sample):
         _, h, w = sample['img'].shape
-
-        if random.random() < self.white_p:
-            sample['bg_patch'] = torch.ones((3, h, w))
-            return sample
         
-        available_bgs = self.get_available_idx(h, w)
-        if len(available_bgs) == 0:
-            sample['bg_patch'] = torch.ones((3, h, w))
-            return sample
-        bg_idx, bg = random.choice(available_bgs)
+        if 'bg_idx' not in sample:
+            available_bgs = self.get_available_idx(h, w)
+            if len(available_bgs) == 0 or random.random() < self.white_p:
+                sample['bg_patch'] = torch.ones((3, h, w))
+                return sample
+            bg_idx, bg = random.choice(available_bgs)
+        else:
+            bg_idx = sample['bg_idx']
+            if bg_idx < 0:
+                sample['bg_patch'] = torch.ones((3, h, w))
+                return sample
+            bg = self.bgs[bg_idx]
+
         sample['bg_path'] = self.bgs_paths[bg_idx]
         bg_patch, _ = self.random_patch(bg, h, w)
         assert bg_patch.numel() > 0, f'Background patch is empty for image size {h}x{w}'
