@@ -99,6 +99,9 @@ class WriterID(ModelMixin, ConfigMixin):
         out = self.linear2(self.relu(self.linear(out)))
 
         return out
+    
+    def reset_last_layer(self, num_writers: int):
+        self.linear2 = nn.Linear(self.config.latent_channels, num_writers)
 
 
 class ResnetBlock(nn.Module):

@@ -180,8 +180,10 @@ github_emuru.pub
 github_emuru
 results/
 results_wid/
+results_wid_iam/
 results_htr/
 results_vae/
+results_vae_iam/
 *.safetensors
 models/lightning_vae
 HWD

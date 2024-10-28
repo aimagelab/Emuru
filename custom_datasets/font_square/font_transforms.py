@@ -266,7 +266,7 @@ class TailorTensor:
 
 
 class SplitAlphaChannel:
-    def __init__(self, min_alpha=0.3, max_alpha=1.0):
+    def __init__(self, min_alpha=0.5, max_alpha=1.0):
         self.min_alpha = min_alpha
         self.max_alpha = max_alpha
 

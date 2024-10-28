@@ -27,6 +27,10 @@ from custom_datasets import OnlineFontSquare, TextSampler, collate_fn
 from models.autoencoder_loss import AutoencoderLoss
 from custom_datasets.font_square.font_square import make_renderers
 from models.writer_id import WriterID
+from custom_datasets import dataset_factory
+from custom_datasets.constants import FONT_SQUARE_CHARSET, PAD, START_OF_SEQUENCE, END_OF_SEQUENCE
+from custom_datasets.alphabet import Alphabet
+from custom_datasets.font_square import pad_sequence, subsequent_mask
 
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
@@ -37,7 +41,7 @@ logger = get_logger(__name__)
 
 
 @torch.no_grad()
-def validation(eval_loader, vae, accelerator, loss_fn, weight_dtype, htr, writer_id, wandb_prefix="eval"):
+def validation(eval_loader, vae, accelerator, loss_fn, weight_dtype, htr, writer_id, font_square_alphabet, wandb_prefix="eval"):
     vae_model = accelerator.unwrap_model(vae)
     vae_model.eval()
     htr_model = accelerator.unwrap_model(htr)
@@ -50,14 +54,23 @@ def validation(eval_loader, vae, accelerator, loss_fn, weight_dtype, htr, writer
 
     for step, batch in enumerate(eval_loader):
         with accelerator.autocast():
-            images = batch['images'].to(weight_dtype)
-            targets_text_images = batch['text_images'].to(weight_dtype)
-            writers = batch['writers']
+            images = batch['style_img'][:, :, :, :768].to(weight_dtype)  # keep only one channel to have greyscale
+            _, _, _, w = images.shape
+            if w < 768:
+                images = torchvision.functional.pad(images, (0, 0, 768 - w, 0), fill=1.)
 
-            text_logits_s2s = batch['text_logits_s2s']
-            text_logits_s2s_unpadded_len = batch['unpadded_texts_len']
-            tgt_mask = batch['tgt_key_mask']
-            tgt_key_padding_mask = batch['tgt_key_padding_mask']
+            targets = images[:, :1, :, :]
+            writers = batch['style_author_idx'].to(weight_dtype)
+            texts = batch['style_text']
+            text_logits_ctc = [font_square_alphabet.encode(text) for text in  batch['style_text']]
+            text_logits_ctc = pad_sequence(text_logits_ctc, padding_value=PAD, batch_first=True)
+            sos = torch.LongTensor([START_OF_SEQUENCE] * len(text_logits_ctc))[:, None]
+            eos = torch.LongTensor([END_OF_SEQUENCE] *len(text_logits_ctc))[:, None]
+            text_logits_s2s = torch.cat([sos, text_logits_ctc, eos], dim=1)
+            text_logits_s2s = pad_sequence(text_logits_s2s, padding_value=PAD, batch_first=True)
+            text_logits_s2s_unpadded_len =torch.LongTensor( [len(text) for text in texts])
+            tgt_mask = subsequent_mask(text_logits_s2s.shape[-1] - 1)
+            tgt_key_padding_mask = text_logits_s2s == PAD
 
             posterior = vae_model.encode(images).latent_dist
             z = posterior.sample()
@@ -102,10 +115,10 @@ def validation(eval_loader, vae, accelerator, loss_fn, weight_dtype, htr, writer
 
 def train():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--output_dir", type=str, default='results_vae', help="output directory")
-    parser.add_argument("--logging_dir", type=str, default='results_vae', help="logging directory")
-    parser.add_argument("--train_batch_size", type=int, default=32, help="train batch size")
-    parser.add_argument("--eval_batch_size", type=int, default=32, help="eval batch size")
+    parser.add_argument("--output_dir", type=str, default='results_vae_iaml', help="output directory")
+    parser.add_argument("--logging_dir", type=str, default='results_vae_iaml', help="logging directory")
+    parser.add_argument("--train_batch_size", type=int, default=8, help="train batch size")
+    parser.add_argument("--eval_batch_size", type=int, default=8, help="eval batch size")
     parser.add_argument("--epochs", type=int, default=10000, help="number of epochs to train the model")
     parser.add_argument("--eval_epochs", type=int, default=1, help="eval interval")
     parser.add_argument("--lr", type=float, default=1e-4, help="learning rate")
@@ -114,10 +127,10 @@ def train():
     parser.add_argument("--resume_id", type=str, default=None, help="resume from checkpoint")
     parser.add_argument("--vae_config", type=str, default='configs/vae/VAE_64x768.json', help='vae config path')
     parser.add_argument("--report_to", type=str, default="wandb")
-    parser.add_argument("--wandb_project_name", type=str, default="emuru_vae", help="wandb project name")
+    parser.add_argument("--wandb_project_name", type=str, default="emuru_vae_iaml", help="wandb project name")
 
-    parser.add_argument("--htr_path", type=str, default='results_htr/f6a6', help='htr checkpoint path')
-    parser.add_argument("--writer_id_path", type=str, default='results_writer_id/wd0/model_0125', help='writerid config path')
+    parser.add_argument("--htr_path", type=str, default='results_htr/f6a6/model_0070', help='htr checkpoint path')
+    parser.add_argument("--writer_id_path", type=str, default='results_wid/08be/model_0175', help='writerid config path')
     
     parser.add_argument("--num_samples_per_epoch", type=int, default=None)
     parser.add_argument("--lr_scheduler", type=str, default="reduce_lr_on_plateau")
@@ -184,20 +197,14 @@ def train():
         betas=(args.adam_beta1, args.adam_beta2),
         weight_decay=args.adam_weight_decay,
         eps=args.adam_epsilon)
-
-    text_sampler = TextSampler(8, 32, (4, 7), exponent=0.5)
-    renderers = make_renderers('files/font_square/clean_fonts', calib_threshold=0.8, verbose=True, load_font_into_mem=args.load_font_into_mem)
-    train_dataset = OnlineFontSquare('files/font_square/clean_fonts', 'files/font_square/backgrounds',
-                                     text_sampler=text_sampler, length=args.num_samples_per_epoch, load_font_into_mem=args.load_font_into_mem, 
-                                     renderers=renderers)
-    eval_dataset = OnlineFontSquare('files/font_square/clean_fonts', 'files/font_square/backgrounds',
-                                    text_sampler=text_sampler, length=args.num_samples_per_epoch, load_font_into_mem=args.load_font_into_mem, 
-                                    renderers=renderers)
-
-    train_loader = DataLoader(train_dataset, batch_size=args.train_batch_size, shuffle=True,
-                              collate_fn=collate_fn, num_workers=4, persistent_workers=False)
-    eval_loader = DataLoader(eval_dataset, batch_size=args.eval_batch_size, shuffle=False,
-                             collate_fn=collate_fn, num_workers=4, persistent_workers=False)
+    
+    train_dataset =  dataset_factory('train', ['iam_lines'], root_path='/home/fquattrini/emuru/files/datasets/')
+    train_loader = DataLoader(train_dataset, batch_size=args.train_batch_size, shuffle=False, collate_fn=train_dataset.collate_fn, 
+                              num_workers=4, persistent_workers=False)
+    
+    eval_dataset =  dataset_factory('test', ['iam_lines'], root_path='/home/fquattrini/emuru/files/datasets/')
+    eval_loader = DataLoader(eval_dataset, batch_size=args.eval_batch_size, shuffle=False, collate_fn=eval_dataset.collate_fn, 
+                              num_workers=4, persistent_workers=False)  #TODO CHANGE THE WRITERID
 
     lr_scheduler = get_scheduler(
         args.lr_scheduler,
@@ -214,7 +221,9 @@ def train():
     for param in writer_id.parameters():
         param.requires_grad = False
 
-    loss_fn = AutoencoderLoss(alphabet=train_dataset.alphabet)
+    font_square_alphabet = Alphabet(FONT_SQUARE_CHARSET)
+
+    loss_fn = AutoencoderLoss(alphabet=font_square_alphabet)
     args.htr_params = sum([p.numel() for p in htr.parameters()])
     args.writer_id_params = sum([p.numel() for p in writer_id.parameters()])
     args.total_params = args.vae_params + args.htr_params + args.writer_id_params
@@ -269,14 +278,23 @@ def train():
 
             with accelerator.autocast():
                 with accelerator.accumulate(vae):
-                    images = batch['images'].to(weight_dtype)
-                    targets_text_images = batch['text_images'].to(weight_dtype)
-                    writers = batch['writers']
+                    images = batch['style_img'][:, :, :, :768].to(weight_dtype)  # keep only one channel to have greyscale
+                    _, _, _, w = images.shape
+                    if w < 768:
+                        images = torchvision.functional.pad(images, (0, 0, 768 - w, 0), fill=1.)
 
-                    text_logits_s2s = batch['text_logits_s2s']
-                    text_logits_s2s_unpadded_len = batch['unpadded_texts_len']
-                    tgt_mask = batch['tgt_key_mask']
-                    tgt_key_padding_mask = batch['tgt_key_padding_mask']
+                    targets = images[:, :1, :, :]
+                    writers = batch['style_author_idx'].to(weight_dtype)
+                    texts = batch['style_text']
+                    text_logits_ctc = [font_square_alphabet.encode(text) for text in  batch['style_text']]
+                    text_logits_ctc = pad_sequence(text_logits_ctc, padding_value=PAD, batch_first=True)
+                    sos = torch.LongTensor([START_OF_SEQUENCE] * len(text_logits_ctc))[:, None]
+                    eos = torch.LongTensor([END_OF_SEQUENCE] *len(text_logits_ctc))[:, None]
+                    text_logits_s2s = torch.cat([sos, text_logits_ctc, eos], dim=1)
+                    text_logits_s2s = pad_sequence(text_logits_s2s, padding_value=PAD, batch_first=True)
+                    text_logits_s2s_unpadded_len =torch.LongTensor( [len(text) for text in texts])
+                    tgt_mask = subsequent_mask(text_logits_s2s.shape[-1] - 1)
+                    tgt_key_padding_mask = text_logits_s2s == PAD
 
                     if accelerator.num_processes > 1:
                         posterior = vae.module.encode(images).latent_dist
@@ -288,7 +306,7 @@ def train():
                     else:
                         pred = vae.decode(z).sample
 
-                    loss, log_dict, _ = loss_fn(images=targets_text_images, z=z, reconstructions=pred, posteriors=posterior,
+                    loss, log_dict, _ = loss_fn(images=targets, z=z, reconstructions=pred, posteriors=posterior,
                                                 writers=writers, text_logits_s2s=text_logits_s2s,
                                                 text_logits_s2s_length=text_logits_s2s_unpadded_len,
                                                 tgt_key_padding_mask=tgt_key_padding_mask, source_mask=tgt_mask,
@@ -329,13 +347,13 @@ def train():
         train_state.epoch += 1
         if epoch % args.eval_epochs == 0 and accelerator.is_main_process:
             with torch.no_grad():
-                eval_loss = validation(eval_loader, vae, accelerator, loss_fn, weight_dtype,  htr, writer_id, 'eval')
+                eval_loss = validation(eval_loader, vae, accelerator, loss_fn, weight_dtype,  htr, writer_id, font_square_alphabet, 'eval')
                 eval_loss = broadcast(torch.tensor(eval_loss, device=accelerator.device), from_process=0)
 
                 if args.use_ema:
                     ema_vae.store(vae.parameters())
                     ema_vae.copy_to(vae.parameters())
-                    _ = validation(eval_loader, vae, accelerator, loss_fn, weight_dtype,  htr, writer_id, 'ema')
+                    _ = validation(eval_loader, vae, accelerator, loss_fn, weight_dtype,  htr, writer_id, font_square_alphabet, 'ema')
                     ema_vae.restore(vae.parameters())
 
                 if eval_loss < train_state.best_eval:

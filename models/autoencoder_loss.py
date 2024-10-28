@@ -37,6 +37,15 @@ class AutoencoderLoss(nn.Module):
     def forward(self, images, z, reconstructions, posteriors, writers, text_logits_s2s,
                 text_logits_s2s_length, split="train", tgt_key_padding_mask=None, source_mask=None, htr=None, writer_id=None):
 
+        
+        z = z.to(images.device)
+        reconstructions = reconstructions.to(images.device)
+        text_logits_s2s = text_logits_s2s.to(images.device)
+        text_logits_s2s_length = text_logits_s2s_length.to(images.device)
+        writers = writers.to(images.device)
+        tgt_key_padding_mask = tgt_key_padding_mask.to(images.device)
+        source_mask = source_mask.to(images.device) if source_mask is not None else None
+        
         rec_loss = torch.abs(images.contiguous() - reconstructions.contiguous())
         nll_loss = rec_loss
         htr_loss = torch.tensor(0.0, device=images.device)
@@ -61,7 +70,7 @@ class AutoencoderLoss(nn.Module):
         if writer_id is not None:
             writer_id_input = reconstructions if not self.latent_htr_wid else z
             output_writer_id = writer_id(writer_id_input)
-            writer_loss = self.writer_criterion(output_writer_id, writers) * self.writer_weight
+            writer_loss = self.writer_criterion(output_writer_id.to(torch.float32), writers.to(torch.int64)) * self.writer_weight
             predicted_authors = torch.argmax(output_writer_id, dim=1)
             acc = self.accuracy.compute(predictions=predicted_authors.int(), references=writers.int())['accuracy']
             nll_loss = nll_loss + writer_loss
