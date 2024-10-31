@@ -12,14 +12,15 @@ from models.origami import OrigamiNet
 from models.autoencoder_kl import AutoencoderKL
 
 class Emuru(torch.nn.Module):
-    def __init__(self,
-                 t5_checkpoint="google-t5/t5-small",
-                 vae_checkpoint='files/checkpoints/vae_0061',
-                 ocr_checkpoint='files/checkpoints/Origami_bw_img/origami.pth',
-                 slices_per_query=1):
+    def __init__(self, t5_checkpoint='google-t5/t5-small',
+                 vae_checkpoint='results_vae/a912/model_0205',
+                 ocr_checkpoint='files/checkpoints/Origami_bw_img/origami.pth', slices_per_query=1):
         super(Emuru, self).__init__()
         self.tokenizer = AutoTokenizer.from_pretrained('google/byt5-small')  # per-character tokenizer
         self.data_collator = HFDataCollector(tokenizer=self.tokenizer)
+
+        self.padding_token = torch.tensor([[-0.4951,  0.8021,  0.3429,  0.5622,  0.5271,  0.5756,  0.7194,  0.6150]])
+        self.padding_token_threshold = 0.484982096850872
 
         config = T5Config.from_pretrained(t5_checkpoint)
         config.vocab_size = len(self.tokenizer)
@@ -43,7 +44,7 @@ class Emuru(torch.nn.Module):
         self.mse_criterion = MSELoss()
         self.ctc_criterion = CTCLoss()
         self.trainer = None
-        self.alpha = 0.9
+        self.alpha = 1.0
 
     def set_training(self, model, training):
         model.train() if training else model.eval()
@@ -149,38 +150,51 @@ class Emuru(torch.nn.Module):
         return new_image
     
     
-    def generate(self, text=None, img=None, input_ids=None, max_new_tokens=96, decoder_truncate=None):
+    def generate(self, text=None, img=None, z_sequence=None, input_ids=None, max_new_tokens=256,
+                 stopping_criteria='latent', stopping_after=10, stopping_errors=1):
         assert text is not None or input_ids is not None, 'Either text or input_ids must be provided'
+        assert img is not None or z_sequence is not None, 'Either img or z_sequence must be provided'
+
         if input_ids is None:
             input_ids = self.tokenizer(text, return_tensors='pt', padding=True).input_ids
             input_ids = input_ids.to(next(self.T5.parameters()).device)
         
-        z_sequence = None
-        if img is not None:
+        if z_sequence is None:
             _, z_sequence, _ = self._img_encode(img)
-            if decoder_truncate is not None:
-                z_sequence = z_sequence[:, :decoder_truncate]
+        z_sequence = [z_sequence]
 
-        new_z_sequence = [z_sequence, ] if z_sequence is not None else []
         sos = repeat(self.sos.weight, '1 d -> b 1 d', b=input_ids.size(0))
         for _ in range(max_new_tokens):
-            if len(new_z_sequence) == 0:
+            if len(z_sequence) == 0:
                 decoder_inputs_embeds = sos
             else:
-                decoder_inputs_embeds = self.query_emb(torch.cat(new_z_sequence, dim=1))
+                decoder_inputs_embeds = self.query_emb(torch.cat(z_sequence, dim=1))
                 decoder_inputs_embeds = torch.cat([sos, decoder_inputs_embeds], dim=1)
             output = self.T5(input_ids, decoder_inputs_embeds=decoder_inputs_embeds)
             vae_latent = self.t5_to_vae(output.logits[:, -1:])
-            new_z_sequence.append(vae_latent)
+            z_sequence.append(vae_latent)
 
-        z_sequence = torch.cat(new_z_sequence, dim=1)
+            if stopping_criteria == 'latent':
+                curr_z_sequence = torch.cat(z_sequence, dim=1)
+                pad_token = repeat(self.padding_token, '1 d -> b 1 d', b=input_ids.size(0)).to(decoder_inputs_embeds.device)
+                similarity = torch.nn.functional.cosine_similarity(curr_z_sequence, pad_token, dim=-1)
+                similarity = similarity[:, -stopping_after:] > self.padding_token_threshold
+                if torch.all(similarity.sum(-1) >= (stopping_after - stopping_errors)):
+                    z_sequence = [curr_z_sequence[:, :-stopping_after]]
+                    break
+            elif stopping_criteria == 'pixel':
+                raise NotImplementedError
+
+        z_sequence = torch.cat(z_sequence, dim=1)
         img = torch.clamp(self.vae.decode(self.z_rearrange(z_sequence)).sample, -1, 1)
         return img
     
     @torch.no_grad()
     def continue_gen_test(self, gt, batch, pred=None):
         def _continue_gen(style_len):
-            test_img = self.generate(input_ids=batch['input_ids'], img=batch['img'], max_new_tokens=96 - style_len, decoder_truncate=style_len)[:16]
+            _, z_sequence, _ = self._img_encode(batch['img'])
+            z_sequence = z_sequence[:, :style_len]
+            test_img = self.generate(input_ids=batch['input_ids'], z_sequence=z_sequence, max_new_tokens=96 - style_len, stopping_criteria=None)[:16]
             test_img[:, :, :, style_len * 8] = -1  # add a black line between style and pred
             return test_img
         

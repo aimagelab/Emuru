@@ -223,6 +223,14 @@ class IAM_dataset(Base_dataset):
         
         assert not self.preloaded or len(self.imgs) == len(self.imgs_preloaded), 'Preloaded images do not match'
 
+class IAM_dataset_double(IAM_dataset):
+    def __getitem__(self, idx):
+        sample = super().__getitem__(idx)
+        sample['style_img'] = torch.cat([sample['style_img'], sample['same_img']], dim=-1)
+        del sample['same_img']
+        sample['style_text'] = sample['style_text'] + ' ' + sample['same_text']
+        del sample['same_text']
+        return sample
 
 class IAM_custom_dataset(Base_dataset):
     def __init__(self, path, dataset_type, nameset=None, transform=T.ToTensor(), pkl_path=None, **kwargs):
@@ -280,7 +288,7 @@ class IAM_eval(IAM_dataset):
         super().__init__(*args, **kwargs)
 
         # with gzip.open('files/iam_htg_setting.json.gz', 'rt', encoding='utf-8') as file:
-        with gzip.open('files/iam_lines_htg_setting.json.gz', 'rt', encoding='utf-8') as file:
+        with gzip.open('files/iam_htg_setting_l.json.gz', 'rt', encoding='utf-8') as file:
             self.data = json.load(file)
 
         self.imgs_id_to_path = {img.stem: img for img in self.imgs}
@@ -595,6 +603,8 @@ def dataset_factory(nameset, datasets, idx_to_char=None, img_height=64, gen_patc
             datasets_list.append(IAM_eval(root_path / 'IAM', dataset_type='words', **kwargs))
         elif name.lower() == 'iam_lines':
             datasets_list.append(IAM_dataset(root_path / 'IAM', dataset_type='lines', **kwargs))
+        elif name.lower() == 'iam_lines_double':
+            datasets_list.append(IAM_dataset_double(root_path / 'IAM', dataset_type='lines', **kwargs))
         elif name.lower() == 'iam_lines_16':
             datasets_list.append(IAM_dataset(root_path / 'IAM', dataset_type='lines_16', **kwargs))
         elif name.lower() == 'iam_lines_xl':

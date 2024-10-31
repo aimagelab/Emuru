@@ -99,13 +99,17 @@ def make_renderers(fonts, height=None, width=None, calib_text=None, calib_thresh
         fonts_data = {}
 
     fonts_charset_path = fonts[0].parent / 'fonts_charsets.json'
-    with open(fonts_charset_path, 'r') as f:
-        fonts_charset = json.load(f)
+    if fonts_charset_path.exists():
+        with open(fonts_charset_path, 'r') as f:
+            fonts_charset = json.load(f)
+    else:
+        fonts_charset = {}
 
     def render_fn(font_path, load_font_into_mem):
         try:
             font_size = fonts_data.get(font_path.name, 64)
-            charset = set(fonts_charset.get(font_path.name, []))
+            charset = fonts_charset.get(font_path.name, None)
+            charset = None if charset is None else set(charset)
             render = Render(font_path, height, width, font_size, charset, load_font_into_mem)
             if font_path.name not in fonts_data:
                 render.calibrate(calib_text, calib_threshold, calib_h)
@@ -158,7 +162,10 @@ class OnlineFontSquare(Dataset):
         self.fonts = get_fonts(fonts)
         if renderers is None:
             renderers = make_renderers(fonts, calib_threshold=0.8, verbose=True, load_font_into_mem=load_font_into_mem)
-        renderers = sorted(renderers, key=lambda r: len(r.charset), reverse=True)
+        try:
+            renderers = sorted(renderers, key=lambda r: len(r.charset), reverse=True)
+        except:
+            pass
         renderers = renderers[:100000]
 
         self.text_sampler = text_sampler
@@ -176,7 +183,7 @@ class OnlineFontSquare(Dataset):
             FT.RandomInvert(p=0.2),
             FT.ImgResize(64),
             # FT.MaxWidth(768),
-            FT.ToWidth(768),
+            FT.ToWidth(2048),  # old value 768
             # FT.PadDivisible(8),
             FT.MergeWithBackground(),
             FT.Normalize((0.5,), (0.5,))

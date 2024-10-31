@@ -30,19 +30,9 @@ def train(args):
             model.load_pretrained(args.resume_dir)
             print(f'Resumed with the old checkpoint system: {checkpoint_path}')
 
-    # sampler = TextSampler(32, 64, (4, 7))
-    sampler = TextSampler(64, 128, (24, 32))
-    # sampler = GibberishSampler(32)
-    if args.renderers:
-        with open(args.renderers, 'rb') as f:
-            renderers = pickle.load(f)
-    else:
-        renderers = None
-
-    dataset = OnlineFontSquare(args.fonts, args.backgrounds, sampler, renderers=renderers)
-    dataset[0]
-    dataset.length *= args.db_multiplier
-    loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, collate_fn=model.data_collator,
+    dataset = dataset_factory('train', ['iam_lines_double'], root_path='/home/vpippi/Teddy/files/datasets/')
+    dataset.batch_keys('same', 'style')
+    loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, collate_fn=dataset.collate_fn,
                         num_workers=args.dataloader_num_workers)
     
     eval_dataset = dataset_factory('test', ['iam_lines'], root_path='/home/vpippi/Teddy/files/datasets/')
@@ -77,9 +67,11 @@ def train(args):
                 batch = next(loader_iter)
 
             batch = {k: v.to(args.device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
+            res = model.tokenizer(batch['style_text'], return_tensors='pt', padding=True, return_attention_mask=True, return_length=True)
+            res = {k: v.to(args.device) if isinstance(v, torch.Tensor) else v for k, v in res.items()}
             batch['noise'] = args.teacher_noise
 
-            losses, pred, gt = model(**batch)
+            losses, pred, gt = model(img=batch['style_img'], **res)
         
             optimizer.zero_grad()
             losses['loss'].backward()
@@ -100,13 +92,15 @@ def train(args):
             wandb_data = {}
             wandb_data['train/alpha'] = model.alpha
 
+            batch['input_ids'] = model.tokenizer(batch['style_text'], return_tensors='pt', padding=True).input_ids.to(args.device)
+            batch['img'] = batch['style_img']
             if args.wandb:
                 pred, gt, synth_gen_test = model.continue_gen_test(gt, batch, pred)
                 # alpha = torch.ones_like(batch['img'][:, :1])
                 # img_rgba = torch.cat([batch['img'], alpha], dim=1)
                 gt = gt.repeat(1, 3, 1, 1)
                 pred = pred.repeat(1, 3, 1, 1)
-                synth_img = torch.cat([batch['img'], gt, pred], dim=-1)[:16]
+                synth_img = torch.cat([batch['style_img'], gt, pred], dim=-1)[:16]
                 wandb_data['synth_img'] = wandb.Image(make_grid(synth_img, nrow=1, normalize=True))
                 wandb_data['synth_gen_test'] = wandb.Image(synth_gen_test)
             
