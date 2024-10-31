@@ -189,3 +189,6 @@ models/lightning_vae
 HWD
 verified_charset.json
 results_writer_id/*
+results_vae_iaml/*
+results_vae_iaml_finetune/*
+results_htr_iam/*

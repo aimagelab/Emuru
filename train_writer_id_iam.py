@@ -83,7 +83,7 @@ def train():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output_dir", type=str, default='results_wid_iam', help="output directory")
     parser.add_argument("--logging_dir", type=str, default='results_wid_iam', help="logging directory")
-    parser.add_argument("--train_batch_size", type=int, default=256, help="train batch size")
+    parser.add_argument("--train_batch_size", type=int, default=64, help="train batch size")
     parser.add_argument("--eval_batch_size", type=int, default=512, help="eval batch size")
     parser.add_argument("--epochs", type=int, default=10000, help="number of train epochs")
     parser.add_argument("--lr", type=float, default=1e-4, help="learning rate")
@@ -150,16 +150,17 @@ def train():
         config_dict = json.load(f)
 
     train_dataset =  dataset_factory('train', ['iam_lines'], root_path='/home/fquattrini/emuru/files/datasets/')
-    train_loader = DataLoader(train_dataset, batch_size=args.train_batch_size, shuffle=False, collate_fn=train_dataset.collate_fn, 
+    train_loader = DataLoader(train_dataset, batch_size=args.train_batch_size, shuffle=True, collate_fn=train_dataset.collate_fn, 
                               num_workers=4, persistent_workers=False)
     
     eval_dataset =  dataset_factory('test', ['iam_lines'], root_path='/home/fquattrini/emuru/files/datasets/')
-    eval_loader = DataLoader(eval_dataset, batch_size=args.eval_batch_size, shuffle=False, collate_fn=eval_dataset.collate_fn, 
+    eval_loader = DataLoader(eval_dataset, batch_size=args.eval_batch_size, shuffle=True, collate_fn=eval_dataset.collate_fn, 
                               num_workers=4, persistent_workers=False) 
 
     wid_path = 'results_wid/08be/model_0175'
     writer_id = WriterID.from_pretrained(wid_path)
     writer_id.reset_last_layer(len(set(train_dataset.authors)))
+    # writer_id.requires_grad_(True)
     writer_id.requires_grad_(False)
     writer_id.linear2.requires_grad_(True)
 

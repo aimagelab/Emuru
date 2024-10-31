@@ -113,3 +113,7 @@ class HTR(ModelMixin, ConfigMixin):
         tgt = self.fc(tgt)
 
         return tgt
+
+    
+    def reset_last_layer(self, alphabet_size):
+        self.fc = nn.Linear(self.d_model, alphabet_size)

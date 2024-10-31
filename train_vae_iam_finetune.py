@@ -115,19 +115,19 @@ def validation(eval_loader, vae, accelerator, loss_fn, weight_dtype, htr, writer
 
 def train():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--output_dir", type=str, default='results_vae_iaml', help="output directory")
-    parser.add_argument("--logging_dir", type=str, default='results_vae_iaml', help="logging directory")
+    parser.add_argument("--output_dir", type=str, default='results_vae_iaml_finetune', help="output directory")
+    parser.add_argument("--logging_dir", type=str, default='results_vae_iaml_finetune', help="logging directory")
     parser.add_argument("--train_batch_size", type=int, default=8, help="train batch size")
     parser.add_argument("--eval_batch_size", type=int, default=8, help="eval batch size")
     parser.add_argument("--epochs", type=int, default=10000, help="number of epochs to train the model")
     parser.add_argument("--eval_epochs", type=int, default=1, help="eval interval")
-    parser.add_argument("--lr", type=float, default=1e-4, help="learning rate")
+    parser.add_argument("--lr", type=float, default=1e-5, help="learning rate")
     parser.add_argument("--seed", type=int, default=24, help="random seed")
     parser.add_argument('--wandb_log_interval_steps', type=int, default=5, help="model save interval")
     parser.add_argument("--resume_id", type=str, default=None, help="resume from checkpoint")
     parser.add_argument("--vae_config", type=str, default='configs/vae/VAE_64x768.json', help='vae config path')
     parser.add_argument("--report_to", type=str, default="wandb")
-    parser.add_argument("--wandb_project_name", type=str, default="emuru_vae_iaml", help="wandb project name")
+    parser.add_argument("--wandb_project_name", type=str, default="emuru_vae_iaml_finetune", help="wandb project name")
 
     parser.add_argument("--htr_path", type=str, default='results_htr_iam/1ff5/model_0270', help='htr checkpoint path')
     parser.add_argument("--writer_id_path", type=str, default='results_wid_iam/25dd/model_0013', help='writerid config path')
@@ -181,7 +181,8 @@ def train():
         args.logging_dir = Path(args.logging_dir)
         args.logging_dir.mkdir(parents=True, exist_ok=True)
 
-    vae = AutoencoderKL.from_config(args.vae_config)
+    vae_path = 'results_vae/a912/model_0205'
+    vae = AutoencoderKL.from_pretrained(vae_path)
     vae.train()
     vae.requires_grad_(True)
     args.vae_params = vae.num_parameters(only_trainable=True)
