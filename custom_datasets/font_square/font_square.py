@@ -150,7 +150,7 @@ def make_renderers(fonts, height=None, width=None, calib_text=None, calib_thresh
 
 
 class OnlineFontSquare(Dataset):
-    def __init__(self, fonts, backgrounds, text_sampler=None, transform=None, length=None, load_font_into_mem=False, renderers=None):
+    def __init__(self, fonts, backgrounds, text_sampler=None, transform=None, length=None, load_font_into_mem=False, renderers=None, max_fonts=None, **kwargs):
         if backgrounds is None:
             backgrounds = []
         if isinstance(backgrounds, str):
@@ -159,9 +159,9 @@ class OnlineFontSquare(Dataset):
             backgrounds = [p for p in backgrounds.rglob('*') if p.suffix in ('.jpg', '.png', '.jpeg')]
         assert isinstance(backgrounds, list), 'Backgrounds must be a directory or a list of paths'
         
-        self.fonts = get_fonts(fonts)
+        self.fonts = get_fonts(fonts)[:max_fonts]
         if renderers is None:
-            renderers = make_renderers(fonts, calib_threshold=0.8, verbose=True, load_font_into_mem=load_font_into_mem)
+            renderers = make_renderers(self.fonts, calib_threshold=0.8, verbose=True, load_font_into_mem=load_font_into_mem)
         try:
             renderers = sorted(renderers, key=lambda r: len(r.charset), reverse=True)
         except:
@@ -183,7 +183,7 @@ class OnlineFontSquare(Dataset):
             FT.RandomInvert(p=0.2),
             FT.ImgResize(64),
             # FT.MaxWidth(768),
-            FT.ToWidth(2048),  # old value 768
+            FT.ToWidth(kwargs.get('_to_width', 768)),
             # FT.PadDivisible(8),
             FT.MergeWithBackground(),
             FT.Normalize((0.5,), (0.5,))

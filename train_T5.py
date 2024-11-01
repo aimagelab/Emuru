@@ -30,8 +30,10 @@ def train(args):
             model.load_pretrained(args.resume_dir)
             print(f'Resumed with the old checkpoint system: {checkpoint_path}')
 
-    # sampler = TextSampler(32, 64, (4, 7))
-    sampler = TextSampler(64, 128, (24, 32))
+    if args.to_width == 768:
+        sampler = TextSampler(32, 64, (4, 7))
+    else:
+        sampler = TextSampler(64, 128, (24, 32))
     # sampler = GibberishSampler(32)
     if args.renderers:
         with open(args.renderers, 'rb') as f:
@@ -39,13 +41,14 @@ def train(args):
     else:
         renderers = None
 
-    dataset = OnlineFontSquare(args.fonts, args.backgrounds, sampler, renderers=renderers)
+    dataset = OnlineFontSquare(args.fonts, args.backgrounds, sampler, renderers=renderers,
+                               _to_width=args.to_width, max_fonts=args.max_fonts)
     dataset[0]
     dataset.length *= args.db_multiplier
     loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, collate_fn=model.data_collator,
                         num_workers=args.dataloader_num_workers)
     
-    eval_dataset = dataset_factory('test', ['iam_lines'], root_path='/home/vpippi/Teddy/files/datasets/')
+    eval_dataset = dataset_factory('test', ['iam_lines'], root_path=args.datasets)
     eval_dataset.batch_keys('style')
     eval_loader = DataLoader(eval_dataset, batch_size=args.batch_size, shuffle=False, collate_fn=eval_dataset.collate_fn,
                             num_workers=args.dataloader_num_workers_eval, persistent_workers=False)
@@ -159,6 +162,7 @@ if __name__ == '__main__':
     parser.add_argument('--output_dir', type=str, default='files/checkpoints/Emuru_100k', help='Output directory')
     parser.add_argument('--fonts', type=str, default='files/font_square/clean_fonts', help='Fonts path')
     parser.add_argument('--backgrounds', type=str, default='files/font_square/backgrounds', help='Backgrounds path')
+    parser.add_argument('--datasets', type=str, default='/home/vpippi/Teddy/files/datasets/', help='Root datasets path')
     parser.add_argument('--renderers', type=str, help='Renderers path')
     parser.add_argument('--checkpoint_tag', type=str, default='', help='Checkpoint tag')
     parser.add_argument('--db_multiplier', type=int, default=1, help='Dataset multiplier')
@@ -179,6 +183,8 @@ if __name__ == '__main__':
     parser.add_argument('--start_alpha', type=float, default=1.0, help='Alpha between the mse_loss (alpha=1) and the ocr_loss (alpha=0)')
     parser.add_argument('--end_alpha', type=float, default=1.0, help='Variable alpha')
     parser.add_argument('--decrement_alpha', type=float, default=0., help='Variable alpha')
+    parser.add_argument('--to_width', type=int, default=768)
+    parser.add_argument('--max_fonts', type=int, default=100_000)
     args = parser.parse_args()
 
     if args.resume_dir is None:

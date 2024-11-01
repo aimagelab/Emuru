@@ -136,7 +136,7 @@ dst_root = src_root.parent / f'emuru_long_iam_lines_no_eval'
 model = Emuru()
 
 # checkpoint_dir = Path('files/checkpoints/Emuru_100k_vae2')
-checkpoint_dir = Path('files/checkpoints/Emuru_100k_vae2_long_iam')
+checkpoint_dir = Path('files/checkpoints/Emuru_100k_vae2_long_ocr')
 checkpoint_path = sorted(Path(checkpoint_dir).rglob('*.pth'))[-1]
 print(f'Using checkpoint {checkpoint_path}')
 checkpoint = torch.load(checkpoint_path, map_location=device)
