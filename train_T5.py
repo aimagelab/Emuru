@@ -184,7 +184,7 @@ if __name__ == '__main__':
     parser.add_argument('--end_alpha', type=float, default=1.0, help='Variable alpha')
     parser.add_argument('--decrement_alpha', type=float, default=0., help='Variable alpha')
     parser.add_argument('--to_width', type=int, default=768)
-    parser.add_argument('--max_fonts', type=int, default=100_000)
+    parser.add_argument('--max_fonts', type=int)
     args = parser.parse_args()
 
     if args.resume_dir is None:
