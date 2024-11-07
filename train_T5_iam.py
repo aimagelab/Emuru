@@ -49,7 +49,7 @@ def train(args):
 
     ])
 
-    dataset = dataset_factory('train', ['iam_lines'], root_path=args.root_dir, post_transform=transform)
+    dataset = dataset_factory('train', args.train_datasets, root_path=args.root_dir, post_transform=transform)
     dataset.batch_keys('style')
     loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, collate_fn=dataset.collate_fn,
                         num_workers=args.dataloader_num_workers)
@@ -195,6 +195,7 @@ if __name__ == '__main__':
     parser.add_argument('--end_alpha', type=float, default=1.0, help='Variable alpha')
     parser.add_argument('--decrement_alpha', type=float, default=0., help='Variable alpha')
     parser.add_argument('--gradient_acc', type=int, default=1)
+    parser.add_argument('--train_datasets', type=str, nargs='+', default=['iam_lines', 'iam_words'])
     args = parser.parse_args()
 
     if args.resume_dir is None:
