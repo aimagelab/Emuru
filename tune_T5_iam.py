@@ -72,10 +72,11 @@ def train(args):
             batch['noise'] = args.teacher_noise
 
             losses, pred, gt = model(img=batch['style_img'], **res)
-        
-            optimizer.zero_grad()
+
             losses['loss'].backward()
-            optimizer.step()
+            if (epoch * args.dataloader_chunk + i) % args.gradient_acc == 0:
+                optimizer.step()
+                optimizer.zero_grad()
 
             losses = {f'train/{k}': v for k, v in losses.items()}
             collector.update(losses)
@@ -173,6 +174,7 @@ if __name__ == '__main__':
     parser.add_argument('--start_alpha', type=float, default=1.0, help='Alpha between the mse_loss (alpha=1) and the ocr_loss (alpha=0)')
     parser.add_argument('--end_alpha', type=float, default=1.0, help='Variable alpha')
     parser.add_argument('--decrement_alpha', type=float, default=0., help='Variable alpha')
+    parser.add_argument('--gradient_acc', type=int, default=1)
     args = parser.parse_args()
 
     if args.resume_dir is None:
