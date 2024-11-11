@@ -15,7 +15,7 @@ import random
 import numpy as np
 from custom_datasets import dataset_factory, OnlineFontSquare
 import json
-from hwd.datasets.shtg import IAMLines, IAMWordsFromLines, CVLLines, RimesLines
+from hwd.datasets.shtg import IAMLines, IAMWordsFromLines, CVLLines, RimesLines, KaraokeLines
 
 from torch.utils.data import Dataset
 from torchvision import transforms as T
@@ -101,6 +101,10 @@ elif args.dataset == 'cvl_lines':
     dataset = CVLLines(num_style_samples=1, load_gen_sample=True)
 elif args.dataset == 'rimes_lines':
     dataset = RimesLines(num_style_samples=1, load_gen_sample=True)
+elif args.dataset == 'karaoke_handw_lines':
+    dataset = KaraokeLines('handwritten', num_style_samples=1, load_gen_sample=True)
+elif args.dataset == 'karaoke_typew_lines':
+    dataset = KaraokeLines('typewritten', num_style_samples=1, load_gen_sample=True)
 dataset = SHTGWrapper(dataset)
 
 dst_root.mkdir(parents=True, exist_ok=True)
