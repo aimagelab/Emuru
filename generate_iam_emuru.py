@@ -15,7 +15,7 @@ import random
 import numpy as np
 from custom_datasets import dataset_factory, OnlineFontSquare
 import json
-from hwd.datasets.shtg import IAMLines, IAMWords, CVLLines, Rimes
+from hwd.datasets.shtg import IAMLines, IAMWordsFromLines, CVLLines, RimesLines
 
 from torch.utils.data import Dataset
 from torchvision import transforms as T
@@ -46,15 +46,44 @@ class SHTGWrapper(Dataset):
         sample = self.dataset[index]
         sample['style_img'] = self.transforms(sample['style_imgs'][0].convert('RGB'))
         return sample
+    
+def trim_white(img, threshold=0.9, padding=8):
+    start_idx, end_idx = 0, img.size(-1)
+    vertical_min = img[0, 0].min(-2).values.tolist()
+
+    # Skip the inital not white columns
+    for v in vertical_min:
+        if v >= threshold:
+            break
+        start_idx += 1
+
+    # Skip the inital white columns
+    for v in vertical_min:
+        if v < threshold:
+            break
+        start_idx += 1
+
+    # Skip the last white columns
+    for v in vertical_min[::-1]:
+        if v < threshold:
+            break
+        end_idx -= 1
+
+    start_idx = max(start_idx - padding, 0)
+    end_idx = min(end_idx + padding, img.size(-1))
+
+    if start_idx >= end_idx:
+        return img
+    
+    return img[..., start_idx:end_idx]
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--checkpoint', type=str, default='files/checkpoints/Emuru_large_100k_vae2_tune')
-parser.add_argument('--dataset', type=str, default='iam_lines')
-parser.add_argument('--dst', type=str, default='files/evaluation/emuru_large_tune_iam_lines')
+parser.add_argument('--checkpoint', type=str, default='files/checkpoints/Emuru_large_100k_vae2_tune2')
+parser.add_argument('--dataset', type=str, default='iam_words')
 args = parser.parse_args()
 
 device = torch.device('cuda')
-dst_root = Path(args.dst)
+dst_root = Path('files/evaluation') / (Path(args.checkpoint).name + '_' + args.dataset)
 model = Emuru(t5_checkpoint='google-t5/t5-large')
 
 checkpoint_dir = Path(args.checkpoint)
@@ -65,48 +94,36 @@ model.load_state_dict(checkpoint['model'], strict=False)
 model.eval().to(device)
 
 if args.dataset == 'iam_lines': 
-    dataset = IAMLines(num_style_samples=1, scenario='test')
+    dataset = IAMLines(num_style_samples=1, load_gen_sample=True)
 elif args.dataset == 'iam_words': 
-    raise NotImplementedError
-    dataset = IAMLines(num_style_samples=1, scenario='test')
-elif args.dataset == 'cvl': 
-    dataset = CVLLines(num_style_samples=1, scenario='test')
-elif args.dataset == 'rimes':
-    dataset = Rimes(num_style_samples=1, scenario='test')
+    dataset = IAMWordsFromLines(num_style_samples=1, load_gen_sample=True)
+elif args.dataset == 'cvl_lines': 
+    dataset = CVLLines(num_style_samples=1, load_gen_sample=True)
+elif args.dataset == 'rimes_lines':
+    dataset = RimesLines(num_style_samples=1, load_gen_sample=True)
 dataset = SHTGWrapper(dataset)
 
-text_data = {}
+dst_root.mkdir(parents=True, exist_ok=True)
+dataset.dataset.save_transcriptions(dst_root)
+
 with torch.inference_mode():
     for idx, sample in enumerate(tqdm(dataset)):
-        # img = sample['img'].to(device).unsqueeze(0)
-        # style_text = sample['text']
-
-        # if you use the dataset iam_eval
         img = sample['style_img'].to(device).unsqueeze(0)
         style_text = sample['style_imgs_text'][0]
         gen_text = sample['gen_text']
-        dst_path = dst_root / Path(sample['dst_path']).relative_to('test')
+        dst_path = dst_root / Path(sample['dst_path'])
 
-        # # if you use the datset iam_lines
-        # img = sample['same_img'].to(device).unsqueeze(0)
-        # style_text = sample['same_text']
-        # gen_text = sample['style_text']
-        # dst_path = Path('test') / sample['same_author'] / f'{idx}.png'
+        gen_w, gen_h = sample['gen_img'].size
+        tgt_w = gen_w * 64 / gen_h
+        tgt_tokens = int(tgt_w / 8 * 1.5)
 
-        text_data[str(Path(sample['dst_path']).relative_to('test'))] = gen_text
-
-        # decoder_inputs_embeds, z_sequence, z = model._img_encode(img)
-        # result = model.generate(f'{style_text} {gen_text}', z_sequence=z_sequence, max_new_tokens=64)
-        decoder_inputs_embeds, z_sequence, z = model._img_encode(img)
-        result = model.generate(style_text + ' ' + gen_text, z_sequence=z_sequence[:, :-8], max_new_tokens=128)
+        result = model.generate(style_text + ' ' + gen_text, img=img, max_new_tokens=tgt_tokens)
 
         if img.size(-1) < result.size(-1):
             result = result[..., img.size(-1):]
+            result = trim_white(result)
         else:
             result = torch.ones_like(result[..., :64])
 
         dst_path.parent.mkdir(parents=True, exist_ok=True)
         save_image(result, dst_path)
-
-with open(dst_root / 'transcriptions.json', 'w') as f:
-    json.dump(text_data, f, indent=2)

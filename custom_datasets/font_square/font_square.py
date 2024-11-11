@@ -78,7 +78,7 @@ def collate_fn(batch):
 def get_fonts(fonts_path):
     fonts = Path(fonts_path) if isinstance(fonts_path, str) else fonts_path
     if isinstance(fonts, Path) and fonts.is_dir():
-        fonts = sorted(list(fonts.glob('*.?tf')))
+        fonts = sorted(list(fonts.rglob('*.?tf')))
     elif isinstance(fonts, Path) and fonts.is_file():
         fonts = [fonts]
     elif isinstance(fonts, list):

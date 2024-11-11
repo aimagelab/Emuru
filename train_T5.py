@@ -33,8 +33,8 @@ def train(args):
     if args.to_width == 768:
         sampler = TextSampler(32, 64, (4, 7))
     else:
-        sampler = TextSampler(64, 128, (24, 32))
-    # sampler = GibberishSampler(32)
+        sampler = TextSampler(4, 128, (1, 32))
+        
     if args.renderers:
         with open(args.renderers, 'rb') as f:
             renderers = pickle.load(f)
@@ -43,7 +43,14 @@ def train(args):
 
     dataset = OnlineFontSquare(args.fonts, args.backgrounds, sampler, renderers=renderers,
                                _to_width=args.to_width, max_fonts=args.max_fonts)
-    dataset[0]
+    
+    if args.to_width != 768:
+        # Remove the random warping
+        dataset.transform.transforms.pop(2)
+        # Remove the random rotation
+        dataset.transform.transforms.pop(1)
+
+    # dataset[0]
     dataset.length *= args.db_multiplier
     loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, collate_fn=model.data_collator,
                         num_workers=args.dataloader_num_workers)

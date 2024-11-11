@@ -195,7 +195,7 @@ if __name__ == '__main__':
     parser.add_argument('--end_alpha', type=float, default=1.0, help='Variable alpha')
     parser.add_argument('--decrement_alpha', type=float, default=0., help='Variable alpha')
     parser.add_argument('--gradient_acc', type=int, default=1)
-    parser.add_argument('--train_datasets', type=str, nargs='+', default=['iam_lines', 'iam_words'])
+    parser.add_argument('--train_datasets', type=str, nargs='+', default=['iam_lines', 'iam_words', 'iam_lines_xl'])
     args = parser.parse_args()
 
     if args.resume_dir is None:

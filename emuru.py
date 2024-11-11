@@ -180,7 +180,8 @@ class Emuru(torch.nn.Module):
                 similarity = torch.nn.functional.cosine_similarity(curr_z_sequence, pad_token, dim=-1)
                 similarity = similarity[:, -stopping_after:] > self.padding_token_threshold
                 if torch.all(similarity.sum(-1) >= (stopping_after - stopping_errors)):
-                    z_sequence = [curr_z_sequence[:, :-stopping_after]]
+                    # z_sequence = [curr_z_sequence[:, :-stopping_after]]
+                    z_sequence = [curr_z_sequence]
                     break
             elif stopping_criteria == 'pixel':
                 raise NotImplementedError
