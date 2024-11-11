@@ -14,7 +14,7 @@ from models.autoencoder_kl import AutoencoderKL
 class Emuru(torch.nn.Module):
     def __init__(self, t5_checkpoint='google-t5/t5-small',
                  vae_checkpoint='results_vae/a912/model_0205',
-                 ocr_checkpoint='files/checkpoints/Origami_bw_img/origami.pth', slices_per_query=1):
+                 ocr_checkpoint='files/checkpoints/Origami_bw_img/origami.pth', slices_per_query=1, channels=4):
         super(Emuru, self).__init__()
         self.tokenizer = AutoTokenizer.from_pretrained('google/byt5-small')  # per-character tokenizer
         self.data_collator = HFDataCollector(tokenizer=self.tokenizer)
@@ -27,19 +27,19 @@ class Emuru(torch.nn.Module):
         self.T5 = T5ForConditionalGeneration(config)
         self.T5.lm_head = torch.nn.Identity()
         self.sos = torch.nn.Embedding(1, config.d_model)
-        self.query_emb = torch.nn.Linear(8 * slices_per_query, config.d_model)
-        self.t5_to_vae = torch.nn.Linear(config.d_model, 8 * slices_per_query, bias=False)
+        self.query_emb = torch.nn.Linear(8 * channels * slices_per_query, config.d_model)
+        self.t5_to_vae = torch.nn.Linear(config.d_model, 8 * channels * slices_per_query, bias=False)
         self.t5_to_ocr = torch.nn.Linear(config.d_model, len(self.tokenizer), bias=False)
 
-        self.vae = AutoencoderKL.from_pretrained(vae_checkpoint)
+        self.vae = AutoencoderKL.from_pretrained(vae_checkpoint, subfolder='vae')
         self.set_training(self.vae, False)
 
         self.ocr = OrigamiNet.from_checkpoint(ocr_checkpoint, o_classes=165, n_channels=1)
         self.set_training(self.ocr, False)
         
         self.query_rearrange = Rearrange('b c h (w q) -> b w (q c h)', q=slices_per_query)
-        self.z_rearrange = Rearrange('b w (q c h) -> b c h (w q)', c=1, q=slices_per_query)
-        self.z_rearrange_eval = Rearrange('w b (q c h) -> b c h (w q)', c=1, q=slices_per_query)
+        self.z_rearrange = Rearrange('b w (q c h) -> b c h (w q)', c=channels, q=slices_per_query)
+        self.z_rearrange_eval = Rearrange('w b (q c h) -> b c h (w q)', c=channels, q=slices_per_query)
 
         self.mse_criterion = MSELoss()
         self.ctc_criterion = CTCLoss()

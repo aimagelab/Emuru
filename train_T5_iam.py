@@ -118,8 +118,8 @@ def train(args):
                 pred, gt, synth_gen_test = model.continue_gen_test(gt, batch, pred)
                 # alpha = torch.ones_like(batch['img'][:, :1])
                 # img_rgba = torch.cat([batch['img'], alpha], dim=1)
-                gt = gt.repeat(1, 3, 1, 1)
-                pred = pred.repeat(1, 3, 1, 1)
+                gt = gt.repeat(1, 3, 1, 1) if gt.size(1) == 1 else gt
+                pred = pred.repeat(1, 3, 1, 1) if pred.size(1) == 1 else pred
                 synth_img = torch.cat([batch['style_img'], gt, pred], dim=-1)[:16]
                 wandb_data['synth_img'] = wandb.Image(make_grid(synth_img, nrow=1, normalize=True))
                 wandb_data['synth_gen_test'] = wandb.Image(synth_gen_test)
@@ -139,8 +139,8 @@ def train(args):
                 pred, gt, real_gen_test = model.continue_gen_test(gt, batch, pred)
                 # alpha = torch.ones_like(batch['img'][:, :1])
                 # img_rgba = torch.cat([batch['img'], alpha], dim=1)
-                gt = gt.repeat(1, 3, 1, 1)
-                pred = pred.repeat(1, 3, 1, 1)
+                gt = gt.repeat(1, 3, 1, 1) if gt.size(1) == 1 else gt
+                pred = pred.repeat(1, 3, 1, 1) if pred.size(1) == 1 else pred
                 real_img = torch.cat([batch['img'], gt, pred], dim=-1)[:16]
                 wandb_data['real_img'] = wandb.Image(make_grid(real_img, nrow=1, normalize=True))
                 wandb_data['real_gen_test'] = wandb.Image(real_gen_test)
@@ -195,7 +195,7 @@ if __name__ == '__main__':
     parser.add_argument('--end_alpha', type=float, default=1.0, help='Variable alpha')
     parser.add_argument('--decrement_alpha', type=float, default=0., help='Variable alpha')
     parser.add_argument('--gradient_acc', type=int, default=1)
-    parser.add_argument('--train_datasets', type=str, nargs='+', default=['iam_lines', 'iam_words', 'iam_lines_xl'])
+    parser.add_argument('--train_datasets', type=str, nargs='+', default=['iam_lines'])
     args = parser.parse_args()
 
     if args.resume_dir is None:
