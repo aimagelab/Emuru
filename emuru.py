@@ -14,7 +14,7 @@ from models.autoencoder_kl import AutoencoderKL
 class Emuru(torch.nn.Module):
     def __init__(self, t5_checkpoint='google-t5/t5-small',
                  vae_checkpoint='results_vae/a912/model_0205',
-                 ocr_checkpoint='files/checkpoints/Origami_bw_img/origami.pth', slices_per_query=1, channels=4):
+                 ocr_checkpoint='files/checkpoints/Origami_bw_img/origami.pth', slices_per_query=1, channels=1):
         super(Emuru, self).__init__()
         self.tokenizer = AutoTokenizer.from_pretrained('google/byt5-small')  # per-character tokenizer
         self.data_collator = HFDataCollector(tokenizer=self.tokenizer)
