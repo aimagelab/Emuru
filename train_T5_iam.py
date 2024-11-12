@@ -22,7 +22,7 @@ def train(args):
     if args.device == 'cpu':
         print('WARNING: Using CPU')
 
-    model = Emuru(args.t5_checkpoint, args.vae_checkpoint, args.ocr_checkpoint, args.slices_per_query).to(args.device)
+    model = Emuru(args.t5_checkpoint, args.vae_checkpoint, args.ocr_checkpoint, args.slices_per_query, channels=4).to(args.device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
 
     if args.resume:
@@ -30,7 +30,7 @@ def train(args):
             checkpoint_path = sorted(Path(args.resume_dir).rglob('*.pth'))[-1]
             checkpoint = torch.load(checkpoint_path, map_location=args.device)
             model.load_state_dict(checkpoint['model'], strict=False)
-            # optimizer.load_state_dict(checkpoint['optimizer'])
+            optimizer.load_state_dict(checkpoint['optimizer'])
             args.start_epoch = checkpoint['epoch'] + 1 if args.resume_wandb else args.start_epoch
             args.wandb_id = checkpoint['wandb_id'] if args.resume_wandb else args.wandb_id
             print(f'Resumed training from {checkpoint_path}')
